@@ -1,0 +1,85 @@
+# zone-definitions.yaml -- zone name -> CIDR list(s)
+#
+# Source of truth for:
+#   - generate_nft.py's cidr_zone_v4/v6 SOURCE-zone maps (zone-classify chain)
+#   - generate_nft.py's zone_trust_v4/zone_dmz_v4/zone_untrust_v4 (etc.)
+#     DESTINATION-zone sets (zone-policy chain dispatch)
+#   - Suricata's HOME_NET (Section 5.3 of inspection-architecture-reference.md
+#     -- driven from this same file so there is a single source of truth)
+#
+# CIDRs below are the REAL values from config.py's VPC_CIDRS, not placeholders:
+#   onprem     10.100.0.0/16   (simulated on-prem datacenter)
+#   inspection 10.0.0.0/16     (GWLB + firewall fleet -- infra only, not a zone)
+#   app        10.1.0.0/16     (spoke: three-tier app)      -> zone-trust
+#   provider   10.2.0.0/16     (PrivateLink provider)       -> zone-dmz
+#
+# Zone mapping for this project (per task spec):
+#   app-vpc      (spoke workload traffic)  -> zone-trust
+#   provider-vpc (PrivateLink provider)    -> zone-dmz
+#   onprem / internet                      -> zone-untrust
+#
+# ---------------------------------------------------------------------------
+# FIX #1 (inspection-architecture-reference.md Section 5.2): the cidr_zone_v4/
+# cidr_zone_v6 SOURCE-zone interval maps must NOT contain a catch-all
+# 0.0.0.0/0 (or ::/0) element alongside more-specific subnet elements --
+# nftables interval maps require non-overlapping ranges, and a superset
+# element coexisting with subset elements in the SAME map is invalid and
+# fails `nft -c -f`.
+#
+# Concretely: the "untrust" zone below has an EMPTY `cidrs` list. Untrust is
+# never rendered as an element in cidr_zone_v4/v6 (generate_nft.py's
+# render_source_zone_maps() only ever consumes each zone's `cidrs` list, and
+# skips zones -- i.e. untrust -- whose `cidrs` list is empty). Onprem/internet
+# traffic reaches the untrust zone at runtime via the zone-classify chain's
+# explicit fallback rule instead:
+#     ct state new meta mark 0x00000000 meta mark set 0x00000003
+# (meta mark is still 0 -- i.e. unset -- after the map lookups above it, so
+# anything that didn't match a defined zone CIDR falls through to here and is
+# assigned the untrust mark). This is a chain RULE, not a map entry -- see
+# generate_nft.py's render_zone_classify_chain().
+#
+# `dest_cidrs` (untrust only, below) is a SEPARATE field consumed only by
+# generate_nft.py's render_dest_zone_sets() step (FIX #2 -- see that file for
+# why this is a distinct generation step from the source maps above).
+#
+# BUGFIX (found by the adversarial verify pass): an earlier version of this
+# file's comment claimed real internet destinations would "correctly fall
+# through to zone-policy's own default-deny" for *-to-untrust rules -- that
+# was wrong. zone-policy used to dispatch every pair, including *-to-untrust,
+# via `ip daddr @zone_untrust_v4`, and that set only ever contains onprem's
+# 10.100.0.0/16 (below) -- so trust-untrust-* rules for a real internet
+# address (e.g. 8.8.8.8) never matched that `ip daddr` clause AT ALL and
+# silently defeated every trust-untrust-* rule in policy.yaml, not just
+# unmatched traffic. Fixed in generate_nft.py's render_zone_policy_chain():
+# *-to-untrust pairs now dispatch on source zone alone (no `ip daddr`
+# condition), ordered after every specific (real-CIDR) pair. `dest_cidrs`
+# below is still generated into a `zone_untrust_v4/v6` set (see
+# render_dest_zone_sets()'s docstring) but that set is no longer part of the
+# untrust fallback dispatch path itself -- it's retained only for a possible
+# future onprem-specific rule.
+# ---------------------------------------------------------------------------
+
+zones:
+  trust:
+    mark: "0x00000001"
+    cidrs:
+      - 10.1.0.0/16   # app-vpc (spoke workload traffic, SPEC.md Section 4 / config.py VPC_CIDRS["app"])
+
+  dmz:
+    mark: "0x00000002"
+    cidrs:
+      - 10.2.0.0/16   # provider-vpc (PrivateLink provider, config.py VPC_CIDRS["provider"])
+
+  untrust:
+    mark: "0x00000003"
+    cidrs: []          # FIX #1: intentionally empty. Never rendered into
+                        # cidr_zone_v4/v6 -- untrust is reached only through
+                        # zone-classify's fallback rule (see header note).
+    dest_cidrs:
+      - 10.100.0.0/16   # onprem-vpc (config.py VPC_CIDRS["onprem"]) -- the one
+                         # concretely-known untrust destination network.
+                         # Genuine internet destinations are not enumerable as
+                         # a finite CIDR list; traffic to them that isn't
+                         # covered by an explicit policy.yaml rule correctly
+                         # falls through to zone-policy's own default-deny+log
+                         # (see generate_nft.py render_zone_policy_chain()).

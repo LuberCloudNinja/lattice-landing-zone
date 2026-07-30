@@ -1,0 +1,15 @@
+.venv
+__pycache__/
+*.pyc
+cdk.out/
+.cdk.staging/
+*.egg-info/
+.DS_Store
+.claude/
+
+# Self-signed cert + PRIVATE KEY generated at synth time by
+# lattice_stack.py's _import_self_signed_certificate() (regenerated fresh on
+# every `cdk synth`, imported into ACM via a custom resource) -- a build
+# artifact, and a private key file regardless of how low-stakes, never belongs
+# in git history.
+stacks/assets/lattice/_generated_cert/

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Centralized Traffic Inspection Architecture -- lattice-lab</title>
+<style>
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-tint: #eef1f5;
+  --text: #1a1f29;
+  --text-muted: #5b6472;
+  --boundary-stroke: #9aa4b2;
+  --box-stroke: #3d4a5c;
+  --flow-north-south: #1f6feb;
+  --flow-east-west: #b35c00;
+  --flow-mgmt: #6e7681;
+  --flow-meta: #8250df;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-tint: #1c2431;
+    --text: #e6edf3;
+    --text-muted: #9ba7b4;
+    --boundary-stroke: #4b5563;
+    --box-stroke: #8b98a9;
+    --flow-north-south: #58a6ff;
+    --flow-east-west: #ffa657;
+    --flow-mgmt: #8b949e;
+    --flow-meta: #d2a8ff;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.page { max-width: 1400px; margin: 0 auto; padding: 0 24px 48px; }
+header { padding-top: 32px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
+.subtitle { font-size: 14px; font-weight: 400; color: var(--text-muted); margin: 0 0 20px; }
+nav.legend { list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-wrap: wrap; gap: 16px 24px; }
+nav.legend ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 16px 24px; }
+nav.legend li { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+.swatch { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }
+.swatch.dashed { background: none; border-top: 3px dashed currentColor; height: 0; }
+.swatch.dotted { background: none; border-top: 3px dotted currentColor; height: 0; }
+.swatch-ns { background: var(--flow-north-south); color: var(--flow-north-south); }
+.swatch-ew { background: var(--flow-east-west); color: var(--flow-east-west); }
+.swatch-mgmt { color: var(--flow-mgmt); }
+.swatch-meta { color: var(--flow-meta); }
+.swatch-boundary { color: var(--boundary-stroke); }
+figure { margin: 0; }
+.diagram-scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; border: 1px solid var(--surface-tint); border-radius: 8px; background: var(--surface); position: relative; }
+svg { display: block; width: 100%; min-width: 900px; height: auto; }
+footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
+
+.box-boundary { fill: none; stroke: var(--boundary-stroke); stroke-width: 2; stroke-dasharray: 10 6; }
+.box-boundary-small { fill: none; stroke: var(--boundary-stroke); stroke-width: 2; stroke-dasharray: 8 5; }
+.box-swimlane { fill: var(--surface-tint); fill-opacity: 0.5; stroke: var(--boundary-stroke); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.box-subnet-tier { fill: var(--surface); stroke: var(--boundary-stroke); stroke-width: 1; }
+.box-service { fill: var(--surface); stroke: var(--box-stroke); stroke-width: 1.5; }
+.box-service-dim { fill: var(--surface-tint); stroke: var(--box-stroke); stroke-width: 1.5; }
+.box-firewall { stroke-width: 2; }
+.box-meta-panel { fill: var(--surface); stroke: var(--flow-meta); stroke-width: 1.5; stroke-dasharray: 3 4; }
+
+.label-boundary { font-size: 13px; font-weight: 600; fill: var(--text); text-transform: uppercase; letter-spacing: 0.5px; }
+.label-swimlane { font-size: 12px; font-weight: 600; fill: var(--text); text-transform: uppercase; }
+.label-subnet-tier { font-size: 11px; font-weight: 500; fill: var(--text-muted); }
+.label-service-title { font-size: 13px; font-weight: 600; fill: var(--text); }
+.label-service-sub { font-size: 10px; font-weight: 500; fill: var(--text-muted); }
+.label-meta-caption { font-size: 11px; font-weight: 500; fill: var(--text-muted); font-style: italic; }
+.flow-label { font-size: 10px; font-weight: 500; fill: var(--flow-north-south); }
+.icon { color: var(--text-muted); }
+
+.firewall-sublabel {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  fill: var(--text-muted);
+  opacity: 0.85;
+}
+
+.flow { fill: none; stroke-width: 2; }
+.flow-north-south { stroke: var(--flow-north-south); }
+.flow-east-west { stroke: var(--flow-east-west); stroke-dasharray: 14 4; }
+.flow-mgmt { stroke: var(--flow-mgmt); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.flow-meta { stroke: var(--flow-meta); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.marker-north-south { fill: var(--flow-north-south); }
+.marker-east-west { fill: var(--flow-east-west); }
+.marker-mgmt { fill: var(--flow-mgmt); }
+.marker-meta { fill: var(--flow-meta); }
+
+#dev-grid { display: none; }
+</style>
+</head>
+<body>
+<div class="page">
+<header>
+  <h1>Centralized Traffic Inspection Architecture</h1>
+  <p class="subtitle">lattice-lab &middot; inspection-vpc &middot; 2 Availability Zones &middot; 2 firewall appliances per AZ</p>
+</header>
+<nav class="legend" aria-label="Diagram legend">
+  <ul>
+    <li><span class="swatch swatch-ns"></span> North-South &mdash; Internet ingress/egress</li>
+    <li><span class="swatch swatch-ew"></span> East-West &mdash; Inter-VPC via Transit Gateway</li>
+    <li><span class="swatch dashed swatch-mgmt"></span> Management / Control Plane</li>
+    <li><span class="swatch dashed swatch-meta"></span> Page Delivery (CloudFront + S3)</li>
+    <li><span class="swatch dashed swatch-boundary"></span> VPC / AZ boundary</li>
+  </ul>
+</nav>
+<main>
+  <figure>
+    <div class="diagram-scroll">
+      <svg viewBox="0 0 1600 1000" role="img" aria-labelledby="diagram-title diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="diagram-title">Centralized traffic-inspection architecture</title>
+  <desc id="diagram-desc">Internet traffic enters through an Internet Gateway into an Inspection VPC, where a Gateway Load Balancer distributes it across a Linux EC2 firewall fleet (two appliances per Availability Zone) for inspection before continuing to a NAT Gateway for egress or, for east-west traffic, back through a Transit Gateway to spoke VPCs. A separate panel shows how this page itself is delivered via CloudFront and S3.</desc>
+  <defs>
+    <marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker>
+<marker id="marker-arrow-east-west" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-east-west"/></marker>
+<marker id="marker-arrow-mgmt" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-mgmt"/></marker>
+<marker id="marker-arrow-meta" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-meta"/></marker>
+  </defs>
+  <g id="boundaries"><g class="stamp-boundary"><rect x="240" y="80" width="840" height="680" rx="16" class="box-boundary"/><text x="250" y="100" class="label-boundary">INSPECTION VPC</text></g><g class="stamp-boundary"><rect x="1360" y="480" width="200" height="96" rx="16" class="box-boundary-small"/><text x="1370" y="500" class="label-boundary">APP-VPC (SPOKE)</text></g><g class="stamp-boundary"><rect x="1360" y="616" width="200" height="96" rx="16" class="box-boundary-small"/><text x="1370" y="636" class="label-boundary">PROVIDER-VPC (SPOKE)</text></g></g>
+  <g id="swimlanes"><g class="stamp-swimlane"><rect x="280" y="240" width="368" height="496" rx="12" class="box-swimlane"/><text x="464.0" y="256" class="label-swimlane" text-anchor="middle">AVAILABILITY ZONE A</text></g><g class="stamp-subnet-tier"><rect x="288" y="264" width="352" height="80" rx="8" class="box-subnet-tier"/><text x="298" y="280" class="label-subnet-tier">GWLB ENDPOINT SUBNET</text></g><g class="stamp-subnet-tier"><rect x="288" y="352" width="352" height="240" rx="8" class="box-subnet-tier"/><text x="298" y="368" class="label-subnet-tier">FIREWALL SUBNET</text></g><g class="stamp-subnet-tier"><rect x="288" y="600" width="352" height="56" rx="8" class="box-subnet-tier"/><text x="298" y="616" class="label-subnet-tier">TGW-ATTACH SUBNET</text></g><g class="stamp-subnet-tier"><rect x="288" y="664" width="352" height="72" rx="8" class="box-subnet-tier"/><text x="298" y="680" class="label-subnet-tier">PUBLIC / NAT SUBNET</text></g><g class="stamp-swimlane"><rect x="672" y="240" width="368" height="496" rx="12" class="box-swimlane"/><text x="856.0" y="256" class="label-swimlane" text-anchor="middle">AVAILABILITY ZONE B</text></g><g class="stamp-subnet-tier"><rect x="680" y="264" width="352" height="80" rx="8" class="box-subnet-tier"/><text x="690" y="280" class="label-subnet-tier">GWLB ENDPOINT SUBNET</text></g><g class="stamp-subnet-tier"><rect x="680" y="352" width="352" height="240" rx="8" class="box-subnet-tier"/><text x="690" y="368" class="label-subnet-tier">FIREWALL SUBNET</text></g><g class="stamp-subnet-tier"><rect x="680" y="600" width="352" height="56" rx="8" class="box-subnet-tier"/><text x="690" y="616" class="label-subnet-tier">TGW-ATTACH SUBNET</text></g><g class="stamp-subnet-tier"><rect x="680" y="664" width="352" height="72" rx="8" class="box-subnet-tier"/><text x="690" y="680" class="label-subnet-tier">PUBLIC / NAT SUBNET</text></g></g>
+  <g id="services"><g class="stamp-service">
+<rect x="40" y="384" width="160" height="64" rx="6" class="box-service"/>
+<g transform="translate(108,398)" class="icon"><path d="M4 16a6 6 0 0 1 11.3-2.8A5 5 0 0 1 20 18H5a4 4 0 0 1-1-7.9z" fill="none" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="120" y="428" class="label-service-title" text-anchor="middle">Internet</text>
+</g><g class="stamp-service">
+<rect x="40" y="456" width="160" height="64" rx="6" class="box-service"/>
+<g transform="translate(110,468)" class="icon"><rect x="0" y="4" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="4" y1="0" x2="4" y2="4" stroke="currentColor" stroke-width="1.5"/><line x1="16" y1="0" x2="16" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="120" y="500" class="label-service-title" text-anchor="middle">Internet Gateway</text>
+</g><g class="stamp-service">
+<rect x="280" y="120" width="760" height="64" rx="6" class="box-service"/>
+<g transform="translate(649,133)" class="icon"><circle cx="11" cy="3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="19" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="3" y2="12.7" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="19" y2="12.7" stroke="currentColor" stroke-width="1.3"/></g>
+<text x="660" y="164" class="label-service-title" text-anchor="middle">Gateway Load Balancer</text>
+</g><g class="stamp-service">
+<rect x="400" y="296" width="120" height="40" rx="6" class="box-service"/>
+
+<text x="460" y="320" class="label-service-title" text-anchor="middle">GWLB Endpoint</text>
+</g><g class="stamp-firewall"><rect x="368" y="376" width="200" height="104" rx="6" class="box-service box-firewall"/><g transform="translate(459,386)" class="icon"><path d="M9 0 L18 3.5 V10 C18 15 14 18.5 9 20 C4 18.5 0 15 0 10 V3.5 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></g><text x="468" y="418" class="label-service-title" text-anchor="middle">Inspection Firewall (Linux EC2) #1</text><text x="468" y="438" class="firewall-sublabel" text-anchor="middle">NFTABLES ZONE POLICY (PL) + SURICATA IPS</text><text x="468" y="452" class="firewall-sublabel" text-anchor="middle">GWLB GENEVE TUNNEL HANDLER</text></g><g class="stamp-firewall"><rect x="368" y="488" width="200" height="104" rx="6" class="box-service box-firewall"/><g transform="translate(459,498)" class="icon"><path d="M9 0 L18 3.5 V10 C18 15 14 18.5 9 20 C4 18.5 0 15 0 10 V3.5 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></g><text x="468" y="530" class="label-service-title" text-anchor="middle">Inspection Firewall (Linux EC2) #2</text><text x="468" y="550" class="firewall-sublabel" text-anchor="middle">NFTABLES ZONE POLICY (PL) + SURICATA IPS</text><text x="468" y="564" class="firewall-sublabel" text-anchor="middle">GWLB GENEVE TUNNEL HANDLER</text></g><g class="stamp-service">
+<rect x="408" y="696" width="112" height="32" rx="6" class="box-service"/>
+
+<text x="464" y="716" class="label-service-title" text-anchor="middle">NAT Gateway</text>
+</g><g class="stamp-service">
+<rect x="800" y="296" width="120" height="40" rx="6" class="box-service"/>
+
+<text x="860" y="320" class="label-service-title" text-anchor="middle">GWLB Endpoint</text>
+</g><g class="stamp-firewall"><rect x="752" y="376" width="200" height="104" rx="6" class="box-service box-firewall"/><g transform="translate(843,386)" class="icon"><path d="M9 0 L18 3.5 V10 C18 15 14 18.5 9 20 C4 18.5 0 15 0 10 V3.5 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></g><text x="852" y="418" class="label-service-title" text-anchor="middle">Inspection Firewall (Linux EC2) #1</text><text x="852" y="438" class="firewall-sublabel" text-anchor="middle">NFTABLES ZONE POLICY (PL) + SURICATA IPS</text><text x="852" y="452" class="firewall-sublabel" text-anchor="middle">GWLB GENEVE TUNNEL HANDLER</text></g><g class="stamp-firewall"><rect x="752" y="488" width="200" height="104" rx="6" class="box-service box-firewall"/><g transform="translate(843,498)" class="icon"><path d="M9 0 L18 3.5 V10 C18 15 14 18.5 9 20 C4 18.5 0 15 0 10 V3.5 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></g><text x="852" y="530" class="label-service-title" text-anchor="middle">Inspection Firewall (Linux EC2) #2</text><text x="852" y="550" class="firewall-sublabel" text-anchor="middle">NFTABLES ZONE POLICY (PL) + SURICATA IPS</text><text x="852" y="564" class="firewall-sublabel" text-anchor="middle">GWLB GENEVE TUNNEL HANDLER</text></g><g class="stamp-service">
+<rect x="800" y="696" width="112" height="32" rx="6" class="box-service"/>
+
+<text x="856" y="716" class="label-service-title" text-anchor="middle">NAT Gateway</text>
+</g><g class="stamp-service">
+<rect x="1160" y="640" width="160" height="64" rx="6" class="box-service"/>
+<g transform="translate(1229,653)" class="icon"><circle cx="11" cy="3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="19" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="3" y2="12.7" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="19" y2="12.7" stroke="currentColor" stroke-width="1.3"/></g>
+<text x="1240" y="684" class="label-service-title" text-anchor="middle">Transit Gateway</text>
+</g><g class="stamp-service">
+<rect x="280" y="800" width="160" height="56" rx="6" class="box-service"/>
+<g transform="translate(349,815)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="360" y="844" class="label-service-title" text-anchor="middle">Management &amp; Logging</text>
+</g></g>
+  <g id="flows-north-south"><path d="M 200 416 L 200 488" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 488 L 216 488 L 216 684 L 464 684 L 464 696" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 496 L 228 496 L 228 272 L 460 272 L 460 296" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><text x="236" y="488" class="flow-label">Ingress RT redirect</text><path d="M 200 488 L 216 488 L 216 684 L 856 684 L 856 696" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 496 L 228 496 L 228 272 L 860 272 L 860 296" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><path d="M 460 296 L 460 184" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 468 184 L 468 376" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 860 296 L 860 184" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 852 184 L 852 376" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/></g>
+  <g id="flows-east-west"><path d="M 568 540 L 640 540 L 640 628" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 640 628 L 640 744 L 1120 744" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 952 540 L 1032 540 L 1032 628" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1032 628 L 1032 752 L 1120 752" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 1120 744 L 1120 672 L 1160 672" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 1320 656 L 1336 656 L 1336 528 L 1360 528" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 1320 688 L 1348 688 L 1348 664 L 1360 664" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/></g>
+  <g id="flows-mgmt"><path d="M 368 428 L 256 428 L 256 828 L 280 828" class="flow flow-mgmt" stroke-dasharray="6 4" marker-end="url(#marker-arrow-mgmt)"/></g>
+  <g id="meta-panel"><rect x="1160" y="80" width="400" height="176" rx="10" class="box-meta-panel"/><text x="1176" y="72" class="label-meta-caption">How this page is delivered</text><g class="stamp-service">
+<rect x="1184" y="100" width="96" height="56" rx="6" class="box-service"/>
+<g transform="translate(1221,115)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="1232" y="144" class="label-service-title" text-anchor="middle">Viewer</text>
+</g><g class="stamp-service">
+<rect x="1320" y="100" width="96" height="56" rx="6" class="box-service"/>
+<g transform="translate(1357,113)" class="icon"><circle cx="11" cy="3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="19" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="3" y2="12.7" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="19" y2="12.7" stroke="currentColor" stroke-width="1.3"/></g>
+<text x="1368" y="144" class="label-service-title" text-anchor="middle">CloudFront</text>
+</g><g class="stamp-service">
+<rect x="1456" y="100" width="96" height="56" rx="6" class="box-service"/>
+<g transform="translate(1495,113)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="1504" y="144" class="label-service-title" text-anchor="middle">S3 (origin)</text>
+</g><path d="M 1280 128 L 1320 128" class="flow flow-meta" marker-start="url(#marker-arrow-meta)" marker-end="url(#marker-arrow-meta)"/><path d="M 1416 128 L 1456 128" class="flow flow-meta" marker-start="url(#marker-arrow-meta)" marker-end="url(#marker-arrow-meta)"/></g>
+</svg>
+    </div>
+  </figure>
+</main>
+<footer>
+  The CloudFront/S3 panel (top right) shows how this page is delivered to your browser &mdash; it is not part of the depicted network.
+</footer>
+</div>
+</body>
+</html>

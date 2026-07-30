@@ -1,0 +1,35 @@
+# pl-sync.timer -- runs pl-sync.service shortly after boot, then every 5
+# minutes thereafter. See docs/inspection-architecture-reference.md Section
+# 5.5: "Pull: on-instance pl-sync.timer (systemd, e.g. every 5 min) as the
+# fallback -- also run synchronously once at boot (from cloud-init, before
+# the instance is marked healthy) so a freshly launched instance never comes
+# up with a stale/empty PL."
+#
+# IMPORTANT NUANCE (do not assume this timer alone satisfies that
+# requirement): OnBootSec below fires ASYNCHRONOUSLY, once systemd reaches
+# timers.target -- it does NOT block the ASG health check / cloud-init's own
+# completion. The reference doc explicitly calls for a *synchronous*
+# boot-time run that happens BEFORE the instance is marked healthy. To
+# satisfy that, inspection_stack.py's launch-template user-data / cloud-init
+# should ALSO invoke `/opt/inspection/pl-sync.sh` directly (a blocking call,
+# not `systemctl start pl-sync.service &`) prior to signaling instance
+# health (e.g. before any ASG lifecycle-hook CONTINUE / cfn-signal call).
+# This timer is the recurring fallback thereafter, not a substitute for that
+# synchronous first call.
+
+[Unit]
+Description=Run pl-sync.service at boot and every 5 minutes thereafter
+
+[Timer]
+# Short delay after boot so network-online.target/IMDS/DNS are reliably up
+# before the first (asynchronous) run -- see the nuance above regarding the
+# separate synchronous cloud-init call this does not replace.
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=pl-sync.service
+# If the instance was stopped/paused across a scheduled run, catch up on
+# next start rather than waiting a full 5 minutes.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,110 @@
+# policy.yaml -- the ordered rule list (the actual PL / policy list).
+#
+# Schema (inspection-architecture-reference.md Section 5.2), one entry = one
+# rule row:
+#   name:      unique across the whole file
+#   src_zone:  must exist in zone-definitions.yaml's `zones` map
+#   dst_zone:  must exist in zone-definitions.yaml's `zones` map
+#   service:   list of {proto: tcp|udp, port: <int>} -- more than one entry
+#              renders as one nft rule per entry, all sharing this rule's name
+#              in the log prefix (e.g. DNS below: udp/53 + tcp/53)
+#   action:    allow | deny
+#   log:       true|false -- prefixes the rendered rule with `log prefix "..."`
+#   inspect:   true => the allow's terminal `accept` is replaced with
+#              `queue num 0-3 options fanout,bypass` (see generate_nft.py's
+#              render_zone_pair_chains() -- `queue` is an nft-terminal
+#              statement, it cannot follow `accept` in the same rule, so
+#              inspect:true REPLACES accept rather than appending after it;
+#              this matches the reference doc's own worked example in
+#              Section 5.2's `chain zone-trust-to-untrust { ... }` code block)
+#   bypass:    optional, default true. false => fail-closed: the rendered
+#              `queue` clause omits `options ... ,bypass`, so if Suricata
+#              isn't attached to the NFQUEUE the kernel drops rather than
+#              accepts (Section 5.3's documented per-rule fail-closed knob,
+#              intended for a specific high-sensitivity zone pair -- ignored
+#              unless inspect: true).
+#
+# Rules are grouped by (src_zone, dst_zone) into per-zone-pair chains by
+# generate_nft.py, in the order those pairs first appear below. Within a
+# chain, rules render in file order, terminated by a generated
+# `log prefix "PL-DENY rule=<pair>-default: " drop` per Section 5.2's
+# documented interzone-deny-by-default posture.
+#
+# At least one inspect: true rule is required so the Suricata NFQUEUE path
+# (built by a separate task, Section 5.3) actually gets exercised -- there are
+# three below: trust-dmz-http, trust-untrust-http, untrust-trust-ssh.
+
+- name: trust-dmz-https
+  src_zone: trust
+  dst_zone: dmz
+  service:
+    - {proto: tcp, port: 443}
+  action: allow
+  log: true
+  inspect: false
+
+- name: trust-dmz-http
+  src_zone: trust
+  dst_zone: dmz
+  service:
+    - {proto: tcp, port: 80}
+  action: allow
+  log: true
+  inspect: true
+
+- name: trust-dmz-dns
+  src_zone: trust
+  dst_zone: dmz
+  service:
+    - {proto: udp, port: 53}
+    - {proto: tcp, port: 53}
+  action: allow
+  log: true
+  inspect: false
+
+- name: dmz-trust-callback
+  src_zone: dmz
+  dst_zone: trust
+  service:
+    - {proto: tcp, port: 8443}
+  action: allow
+  log: true
+  inspect: true
+  bypass: false
+
+- name: trust-untrust-web
+  src_zone: trust
+  dst_zone: untrust
+  service:
+    - {proto: tcp, port: 443}
+  action: allow
+  log: true
+  inspect: false
+
+- name: trust-untrust-http
+  src_zone: trust
+  dst_zone: untrust
+  service:
+    - {proto: tcp, port: 80}
+  action: allow
+  log: true
+  inspect: true
+
+- name: trust-untrust-dns
+  src_zone: trust
+  dst_zone: untrust
+  service:
+    - {proto: udp, port: 53}
+    - {proto: tcp, port: 53}
+  action: allow
+  log: true
+  inspect: false
+
+- name: untrust-trust-ssh
+  src_zone: untrust
+  dst_zone: trust
+  service:
+    - {proto: tcp, port: 22}
+  action: allow
+  log: true
+  inspect: true

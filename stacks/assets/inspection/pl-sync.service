@@ -1,0 +1,47 @@
+# pl-sync.service -- policy-as-code sync agent for the nftables zone policy
+# ("the PL"). See docs/inspection-architecture-reference.md Section 5.5.
+#
+# Triggered by pl-sync.timer (this directory): once shortly after boot, then
+# every 5 minutes thereafter. See pl-sync.timer for the additional
+# synchronous-at-boot nuance from the reference doc that this .timer's
+# OnBootSec alone does not fully cover.
+#
+# Runs as root (no User= override): both `nft -f`/`nft -c -f` (ruleset
+# apply) and reading the instance role's SSM/S3 credentials via the AWS CLI
+# require it in this design.
+
+[Unit]
+Description=pl-sync: pull/validate/apply the nftables zone policy (PL) from S3 + SSM
+Documentation=file:///opt/inspection/README.md
+# Ordering only, not a hard dependency for enablement: pl-sync needs the
+# `nft` binary and /etc/nftables to exist, and outbound network (SSM/S3)
+# to be reachable.
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/inspection/pl-sync.sh
+
+# CDK/launch-template wiring: PL_SSM_PARAM / S3_BUCKET / S3_PREFIX are read
+# from the environment if set (pl-sync.sh uses `${VAR:-placeholder}`
+# fallbacks). Point this at a real file written by cloud-init/user-data so
+# the values never need to be hand-edited into pl-sync.sh itself. Leading
+# '-' makes the file optional, so the unit still runs (falling back to
+# pl-sync.sh's own NEEDS-CDK-WIRING placeholders, which will simply fail
+# the SSM read and log PL-SYNC-ERROR) if it's absent -- fails loud rather
+# than silently, which is the desired behavior pre-wiring.
+# Wired: inspection_stack.py's launch template user-data writes this file
+# before pl-sync.timer's first (boot-time) run.
+EnvironmentFile=-/etc/default/pl-sync
+
+# pl-sync.sh already handles its own failures internally (validation
+# failures exit 1 with a PL-SYNC-ERROR log line, without touching the live
+# ruleset) -- a non-zero exit here just means systemd marks this run
+# failed, which is visible via `systemctl status pl-sync.service` / the
+# journal. Do not add Restart= here: the timer's own 5-minute cadence (or
+# the next SSM version change) is the retry mechanism, not systemd restart
+# loops against a config that just failed validation.
+
+[Install]
+WantedBy=multi-user.target
