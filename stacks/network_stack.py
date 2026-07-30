@@ -264,6 +264,14 @@ class NetworkStack(Stack):
         )
 
         # app-vpc's Private (compute) subnets: send everything to inspection first.
+        # Dependency is scoped to the created CfnRoute itself (via
+        # node.find_child -- add_route() returns None, not the resource),
+        # not subnet.node.add_dependency(app_att): that would put the
+        # dependency on the whole subnet construct, including the Subnet
+        # resource app_att's own subnet_ids already depends on. Harmless
+        # here (app_att's attachment sits in the separate TgwAttach tier),
+        # but provider-vpc's identical pattern below hits exactly that
+        # 2-node cycle since its attachment and this route share one tier.
         for subnet in self.app_vpc.select_subnets(subnet_group_name="Private").subnets:
             subnet.add_route(
                 "DefaultToTgw",
@@ -271,9 +279,15 @@ class NetworkStack(Stack):
                 router_id=self.tgw.ref,
                 destination_cidr_block="0.0.0.0/0",
             )
-            subnet.node.add_dependency(app_att)
+            subnet.node.find_child("DefaultToTgw").node.add_dependency(app_att)
 
         # provider-vpc's Private subnets: same pattern, everything via TGW.
+        # provider_att's subnet_ids ARE these same Private subnets (provider-vpc
+        # only has Public/Private tiers, no dedicated TgwAttach tier like
+        # app-vpc/inspection-vpc) -- subnet.node.add_dependency(provider_att)
+        # would make the Subnet resource depend on the Attachment that itself
+        # depends on that Subnet's ref, a direct CloudFormation circular
+        # dependency. Scoping to just the CfnRoute avoids it.
         for subnet in self.provider_vpc.select_subnets(subnet_group_name="Private").subnets:
             subnet.add_route(
                 "DefaultToTgw",
@@ -281,7 +295,7 @@ class NetworkStack(Stack):
                 router_id=self.tgw.ref,
                 destination_cidr_block="0.0.0.0/0",
             )
-            subnet.node.add_dependency(provider_att)
+            subnet.node.find_child("DefaultToTgw").node.add_dependency(provider_att)
 
         # inspection-vpc's GwlbEndpoint subnets: after GWLB hands inspected
         # traffic back, it needs to go back out via TGW (no local NAT here --
@@ -297,7 +311,7 @@ class NetworkStack(Stack):
                 router_id=self.tgw.ref,
                 destination_cidr_block="0.0.0.0/0",
             )
-            subnet.node.add_dependency(inspection_att)
+            subnet.node.find_child("DefaultToTgw").node.add_dependency(inspection_att)
 
         # ------------------------------------------------------------------
         # inspection-vpc's dedicated NAT instance -- firewall fleet's own
