@@ -52,6 +52,14 @@ class NetworkStack(Stack):
         Tags.of(self).add("Layer", config.Layer.NETWORK)
 
         az_count = 2 if config.MULTI_AZ else 1
+        # RDS's DBSubnetGroup requires >= 2 AZ coverage unconditionally, even
+        # for a single-AZ instance (threetier_stack.py's multi_az=config.MULTI_AZ
+        # governs actual instance HA/cost separately) -- this is a hard AWS
+        # API constraint, not a HA choice, so app-vpc's subnet AZ count can't
+        # follow the general MULTI_AZ cost toggle the way provider-vpc/
+        # onprem-vpc do. Subnets themselves are free; only compute placed in
+        # them costs money, so this doesn't undercut MULTI_AZ's cost intent.
+        app_az_count = max(az_count, 2)
 
         # ------------------------------------------------------------------
         # VPCs
@@ -73,7 +81,7 @@ class NetworkStack(Stack):
             self, "AppVpc",
             vpc_name="app-vpc",
             ip_addresses=ec2.IpAddresses.cidr(config.VPC_CIDRS["app"]),
-            max_azs=az_count,
+            max_azs=app_az_count,
             nat_gateways=0,
             flow_logs={"ToCloudWatch": ec2.FlowLogOptions()},
             subnet_configuration=[
