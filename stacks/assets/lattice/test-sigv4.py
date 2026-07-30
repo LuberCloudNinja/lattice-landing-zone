@@ -7,15 +7,15 @@ requests are denied.
 The service's auth policies (ServiceNetworkAuthPolicy / ServiceAuthPolicy)
 condition on aws:SourceVpc == app-vpc's VPC id. That means:
   - This MUST be run from inside app-vpc (e.g. an SSM session on
-    ThreeTierStack's app-tier instance) -- running it from a laptop over
-    the public internet will get denied even
-    with a perfectly valid SigV4 signature, because the source VPC condition
-    won't match at all.
+    ThreeTierStack's LatticeInstanceTargetHost, or `aws ecs execute-command`
+    into the Fargate app tier) -- running it from a laptop over the public
+    internet will get denied even with a perfectly valid SigV4 signature,
+    because the source VPC condition won't match at all.
   - The IAM principal signing the request needs `vpc-lattice-svcs:Invoke`
-    allowed on it somewhere (e.g. the instance role) -- the auth policy's
-    Principal is "*", so any authenticated (correctly signed) principal
-    satisfying the SourceVpc condition is allowed; an EC2 instance's own
-    role/instance profile credentials are enough.
+    allowed on it somewhere (e.g. the instance/task role) -- the auth
+    policy's Principal is "*", so any authenticated (correctly signed)
+    principal satisfying the SourceVpc condition is allowed; an EC2
+    instance's own role/instance profile credentials are enough.
 
 Usage (from inside app-vpc, e.g. via SSM):
     python3 test-sigv4.py <service-dns-name-or-ip> [--port 80]

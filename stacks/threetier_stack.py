@@ -1,26 +1,34 @@
-"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (ALB+ASG) -> data tier (RDS).
+"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (ALB+Fargate) -> data tier (RDS).
 
 See SPEC.md Section 6 ("threetier_stack.py (three-tier web app)").
 
 config.WEBAPP_SOURCE has not been set yet (still "REPLACE_ME_WEBAPP_SOURCE"
 per SPEC.md Section 0), so this stack deploys the placeholder app in app/
 (app/frontend/index.html, app/backend/app.py) instead -- clearly labeled as
-such in both. Swap app/ for the real app and re-deploy this stack once
-WEBAPP_SOURCE is provided; nothing else here should need to change (the
-launch-template user-data's "run app.py on APP_TIER_PORT" step is the one
-spot SPEC.md Section 6 says to adapt for containerizing a real app instead).
+such in both. Swap app/backend/ for the real app (keep its Dockerfile, or
+replace it) and re-deploy this stack once WEBAPP_SOURCE is provided.
+
+App tier runs on ECS Fargate (smallest task size, 0.25 vCPU/0.5GB) rather
+than an EC2 ASG -- Fargate draws from its own separate vCPU quota pool
+(distinct from the EC2 "Standard" instance-family quota the rest of this
+project's EC2 fleet shares), and needs no host patching. One consequence:
+VPC Lattice's INSTANCE-type target groups (lattice_stack.py L4a/L4c)
+register real EC2 instance IDs, which Fargate tasks fundamentally can't be
+-- see LatticeInstanceTargetHost below for how that's preserved without
+putting the real app-tier workload back on EC2.
 """
 
 from pathlib import Path
 
 import aws_cdk as cdk
 from aws_cdk import CfnOutput, Duration, Stack, Tags
-from aws_cdk import aws_autoscaling as autoscaling
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_rds as rds
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_deployment as s3_deploy
@@ -79,7 +87,10 @@ class ThreeTierStack(Stack):
             vpc=vpc,
             port=APP_TIER_PORT,
             protocol=elbv2.ApplicationProtocol.HTTP,
-            target_type=elbv2.TargetType.INSTANCE,
+            # IP, not INSTANCE -- Fargate's awsvpc networking mode requires
+            # IP-type ALB target groups (there's no host instance to
+            # register by id).
+            target_type=elbv2.TargetType.IP,
             health_check=elbv2.HealthCheck(path="/api/health", healthy_threshold_count=2, unhealthy_threshold_count=3),
         )
         # Exposed publicly (not local) -- lattice_stack.py's L4b ALB-type
@@ -90,20 +101,85 @@ class ThreeTierStack(Stack):
             default_action=elbv2.ListenerAction.forward([self.app_target_group]),
         )
 
-        app_role = iam.Role(
-            self, "AppInstanceRole",
+        # ------------------------------------------------------------------
+        # App tier compute: ECS Fargate, smallest task size. from_asset()
+        # builds app/backend/'s Dockerfile and pushes it to a CDK-managed
+        # ECR asset repo at deploy time -- CDK Pipelines automatically runs
+        # that publish step in a privileged (Docker-capable) CodeBuild
+        # project, no manual configuration needed.
+        # ------------------------------------------------------------------
+        app_cluster = ecs.Cluster(
+            self, "AppCluster", vpc=vpc, container_insights_v2=ecs.ContainerInsights.DISABLED
+        )
+
+        app_task_definition = ecs.FargateTaskDefinition(
+            self, "AppTaskDefinition",
+            cpu=256,
+            memory_limit_mib=512,
+        )
+        app_task_definition.add_container(
+            "AppContainer",
+            image=ecs.ContainerImage.from_asset(str(APP_DIR / "backend")),
+            port_mappings=[ecs.PortMapping(container_port=APP_TIER_PORT)],
+            environment={"PORT": str(APP_TIER_PORT)},
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="app-tier", log_retention=logs.RetentionDays.ONE_WEEK),
+        )
+
+        self.app_service = ecs.FargateService(
+            self, "AppService",
+            cluster=app_cluster,
+            task_definition=app_task_definition,
+            desired_count=2 if config.MULTI_AZ else 1,
+            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+            security_groups=[app_sg],
+            # ECS Exec -- interactive debug access, the Fargate equivalent
+            # of ssm_session_permissions=True on the EC2 instances elsewhere
+            # in this project.
+            enable_execute_command=True,
+            circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
+            # Fine for a lab at desired_count=1 to go briefly to 0 during a
+            # deploy; explicit rather than relying on the (identical) default
+            # so the CLI doesn't flag it as unconfigured.
+            min_healthy_percent=0,
+            max_healthy_percent=200,
+        )
+        self.app_service.attach_to_application_target_group(self.app_target_group)
+
+        # ------------------------------------------------------------------
+        # Dedicated small EC2 instance -- exists ONLY because VPC Lattice's
+        # INSTANCE-type target groups (lattice_stack.py L4a/L4c) register
+        # real EC2 instance IDs, and Fargate tasks cannot be INSTANCE-type
+        # targets (no such registration path exists in the Lattice API).
+        # NOT part of the ALB/CloudFront traffic path -- the app tier above
+        # is the real workload; this just keeps that one Lattice feature
+        # demonstrable now that the real workload no longer runs on EC2.
+        # ------------------------------------------------------------------
+        lattice_target_sg = ec2.SecurityGroup(
+            self, "LatticeInstanceTargetSg",
+            vpc=vpc,
+            description="Dedicated Lattice INSTANCE-target-group demo host -- inbound from app-vpc only",
+            allow_all_outbound=True,
+        )
+        lattice_target_sg.add_ingress_rule(
+            ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(APP_TIER_PORT), "app-vpc (Lattice association traffic)"
+        )
+        lattice_target_sg.add_ingress_rule(
+            ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(443), "app-vpc (Lattice TLS_PASSTHROUGH demo)"
+        )
+
+        lattice_target_role = iam.Role(
+            self, "LatticeInstanceTargetRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
-
-        app_user_data = ec2.UserData.for_linux()
-        app_user_data.add_commands(
+        lattice_target_user_data = ec2.UserData.for_linux()
+        lattice_target_user_data.add_commands(
             "set -e",
             "mkdir -p /opt/app",
             f"cat > /opt/app/app.py << 'PYEOF'\n{(APP_DIR / 'backend' / 'app.py').read_text()}PYEOF",
             "cat > /etc/systemd/system/app-backend.service << 'EOF'\n"
             "[Unit]\n"
-            "Description=Placeholder app-tier backend (SPEC.md Section 6 -- swap for config.WEBAPP_SOURCE)\n"
+            "Description=Lattice INSTANCE-target-group demo backend\n"
             "After=network.target\n"
             "[Service]\n"
             f"Environment=PORT={APP_TIER_PORT}\n"
@@ -115,27 +191,24 @@ class ThreeTierStack(Stack):
             "systemctl daemon-reload",
             "systemctl enable --now app-backend",
         )
-
-        # Exposed publicly -- lattice_stack.py's L4a INSTANCE target group
-        # looks up this ASG's current instances by name.
-        self.app_asg = autoscaling.AutoScalingGroup(
-            self, "AppAsg",
+        # Exposed publicly -- lattice_stack.py references this instance's id
+        # and private IP directly (no custom-resource lookup needed, unlike
+        # the old ASG-backed approach, since a plain ec2.Instance already
+        # exposes both as ordinary CDK attributes).
+        self.lattice_instance_target_host = ec2.Instance(
+            self, "LatticeInstanceTargetHost",
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            instance_type=ec2.InstanceType(config.APP_TIER_INSTANCE_TYPE),
+            instance_type=ec2.InstanceType(config.DEFAULT_INSTANCE_TYPE),
             machine_image=ec2.MachineImage.latest_amazon_linux2023(),
-            security_group=app_sg,
-            role=app_role,
-            user_data=app_user_data,
-            min_capacity=1,
-            max_capacity=2 if config.MULTI_AZ else 1,
-            desired_capacity=1,
-            health_checks=autoscaling.HealthChecks.ec2(grace_period=Duration.minutes(5)),
-            block_devices=[autoscaling.BlockDevice(
-                device_name="/dev/xvda", volume=autoscaling.BlockDeviceVolume.ebs(8, encrypted=True)
+            security_group=lattice_target_sg,
+            role=lattice_target_role,
+            user_data=lattice_target_user_data,
+            ssm_session_permissions=True,
+            block_devices=[ec2.BlockDevice(
+                device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True)
             )],
         )
-        self.app_asg.attach_to_application_target_group(self.app_target_group)
 
         # ------------------------------------------------------------------
         # Data tier: RDS, reachable only from the app tier's own SG (not a
@@ -218,6 +291,7 @@ class ThreeTierStack(Stack):
         CfnOutput(self, "WebDistributionUrl", value=f"https://{self.distribution.distribution_domain_name}")
         CfnOutput(self, "AppAlbDnsName", value=self.alb.load_balancer_dns_name)
         CfnOutput(self, "DatabaseSecretArn", value=self.database.secret.secret_arn)
+        CfnOutput(self, "LatticeInstanceTargetHostId", value=self.lattice_instance_target_host.instance_id)
 
         # ------------------------------------------------------------------
         # cdk-nag suppressions (SPEC.md Section 10)
@@ -225,23 +299,27 @@ class ThreeTierStack(Stack):
         NagSuppressions.add_stack_suppressions(self, [
             NagPackSuppression(
                 id="AwsSolutions-IAM4",
-                reason="AmazonSSMManagedInstanceCore is AWS-curated and appropriate for this lab's "
-                       "SSM-only instance access.",
+                reason="AmazonSSMManagedInstanceCore (LatticeInstanceTargetHost's EC2 role) and "
+                       "AmazonECSTaskExecutionRolePolicy (the Fargate app tier's execution role, CDK's "
+                       "own standard image-pull/log-write policy) are both AWS-curated, not "
+                       "hand-widened.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-IAM5",
-                reason="Wildcards come from CDK's own grant_read()/BucketDeployment-generated policies "
-                       "(standard, not hand-widened) and the RDS-generated-secret attachment policy.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-AS3",
-                reason="ASG notifications need an SNS topic -- extra infrastructure not core to this "
-                       "lab's three-tier demo.",
+                reason="Wildcards come from CDK's own grant_read()/BucketDeployment-generated policies, "
+                       "the RDS-generated-secret attachment policy, the Fargate task definition's "
+                       "framework-generated execution role policy, and ECS Exec's SSM channel "
+                       "permissions -- none hand-widened.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-L1",
                 reason="Flagged Lambda is BucketDeployment's own framework-managed provider function, "
                        "not project-authored code.",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-ECS4",
+                reason="Container Insights is extra CloudWatch cost with no security value for a lab "
+                       "meant to be built and torn down repeatedly.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-S1",
@@ -290,6 +368,22 @@ class ThreeTierStack(Stack):
                 reason="ALB access logging needs a dedicated log bucket -- not worth the added "
                        "infrastructure for a lab's internal ALB.",
             ),
+            NagPackSuppression(
+                id="AwsSolutions-ECS2",
+                reason="The only 'environment variable' is PORT=8080, a fixed, non-sensitive listen "
+                       "port -- not the kind of value AwsSolutions-ECS2 exists to catch (secrets/config "
+                       "that belong in Secrets Manager or SSM Parameter Store instead).",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-EC28",
+                reason="Detailed monitoring is extra CloudWatch cost with no security value for a lab "
+                       "meant to be built and torn down repeatedly (LatticeInstanceTargetHost).",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-EC29",
+                reason="Termination protection would directly conflict with SPEC.md's `cdk destroy "
+                       "--all` teardown requirement (LatticeInstanceTargetHost).",
+            ),
         ])
         NagSuppressions.add_resource_suppressions(
             alb_sg,
@@ -298,5 +392,13 @@ class ThreeTierStack(Stack):
                 reason="cdk-nag can't statically resolve vpc.vpc_cidr_block (a CloudFormation token) to "
                        "confirm it isn't 0.0.0.0/0 -- it's app-vpc's own CIDR, not open access; this ALB "
                        "is internal (internet_facing=False) in any case.",
+            )],
+        )
+        NagSuppressions.add_resource_suppressions(
+            lattice_target_sg,
+            [NagPackSuppression(
+                id="AwsSolutions-EC23",
+                reason="cdk-nag can't statically resolve vpc.vpc_cidr_block (a CloudFormation token) to "
+                       "confirm it isn't 0.0.0.0/0 -- scoped to app-vpc's own CIDR only.",
             )],
         )

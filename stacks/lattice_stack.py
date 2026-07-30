@@ -4,14 +4,16 @@ Grouped with `# ---- L4a ----` etc. comments matching SPEC.md Section 5's
 subsections. A few implementation notes that apply across the whole file:
 
   - INSTANCE-type target groups register EC2 *instance IDs* directly --
-    CloudFormation has no native "keep this Lattice target group in sync
-    with an ASG" mechanism (unlike ELB, where AutoScalingGroup has a
-    built-in target_group_arns property). This stack looks up the app-tier
-    ASG's current instance(s) via a scoped AwsCustomResource (same pattern
-    used for the VPN's TGW attachment lookup and the self-signed cert import
-    below) and registers those. That's a point-in-time snapshot, correct for
-    this lab's desired_capacity=1-or-2 ASG, but NOT a substitute for a real
-    target-tracking mechanism in production.
+    Fargate tasks (threetier_stack.py's real app-tier workload, moved off
+    EC2 for cost/HA) fundamentally cannot fill this role, so this stack
+    targets threetier.lattice_instance_target_host instead -- a small
+    dedicated EC2 instance that exists specifically to keep the
+    INSTANCE-type (and, reusing the same host, IP-type) target-group
+    demos real and working. Its id/private IP are plain CDK attributes on
+    an ec2.Instance construct, so no AwsCustomResource lookup is needed
+    here (unlike the ASG-backed approach this replaced, which had to poll
+    DescribeAutoScalingGroups/DescribeInstances for a point-in-time
+    snapshot of the ASG's current instance).
   - L4c's HTTPS listener needs a certificate, and this lab has no real
     domain to validate a public ACM certificate against, and ACM Private CA
     costs ~$400/month just to exist -- far outside SPEC.md Section 1's
@@ -59,48 +61,13 @@ class LatticeStack(Stack):
         provider_vpc = network.provider_vpc
 
         # ------------------------------------------------------------------
-        # Look up the app-tier ASG's current instance IDs -- see module
-        # docstring for why this needs a custom resource at all.
+        # threetier_stack.py's dedicated Lattice INSTANCE-target-group demo
+        # host -- see module docstring for why this exists (Fargate tasks
+        # can't be INSTANCE-type Lattice targets). Plain CDK attributes, no
+        # custom-resource lookup needed.
         # ------------------------------------------------------------------
-        app_asg_instances_lookup = cr.AwsCustomResource(
-            self, "AppAsgInstancesLookup",
-            on_create=cr.AwsSdkCall(
-                service="AutoScaling",
-                action="describeAutoScalingGroups",
-                parameters={"AutoScalingGroupNames": [threetier.app_asg.auto_scaling_group_name]},
-                physical_resource_id=cr.PhysicalResourceId.of("AppAsgInstancesLookup"),
-                output_paths=["AutoScalingGroups.0.Instances.0.InstanceId"],
-            ),
-            on_update=cr.AwsSdkCall(
-                service="AutoScaling",
-                action="describeAutoScalingGroups",
-                parameters={"AutoScalingGroupNames": [threetier.app_asg.auto_scaling_group_name]},
-                physical_resource_id=cr.PhysicalResourceId.of("AppAsgInstancesLookup"),
-                output_paths=["AutoScalingGroups.0.Instances.0.InstanceId"],
-            ),
-            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE),
-        )
-        app_instance_id = app_asg_instances_lookup.get_response_field("AutoScalingGroups.0.Instances.0.InstanceId")
-
-        # DescribeAutoScalingGroups doesn't return private IPs -- a second,
-        # dependent lookup for the IP-type target group below (L4b).
-        app_instance_ip_call = cr.AwsSdkCall(
-            service="EC2",
-            action="describeInstances",
-            parameters={"InstanceIds": [app_instance_id]},
-            physical_resource_id=cr.PhysicalResourceId.of("AppInstancePrivateIpLookup"),
-            output_paths=["Reservations.0.Instances.0.PrivateIpAddress"],
-        )
-        app_instance_ip_lookup = cr.AwsCustomResource(
-            self, "AppInstancePrivateIpLookup",
-            on_create=app_instance_ip_call,
-            on_update=app_instance_ip_call,
-            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE),
-        )
-        app_instance_ip_lookup.node.add_dependency(app_asg_instances_lookup)
-        app_instance_private_ip = app_instance_ip_lookup.get_response_field(
-            "Reservations.0.Instances.0.PrivateIpAddress"
-        )
+        app_instance_id = threetier.lattice_instance_target_host.instance_id
+        app_instance_private_ip = threetier.lattice_instance_target_host.instance_private_ip
 
         # ------------------------------------------------------------------
         # ---- L4a: service network + first service ----

@@ -18,12 +18,14 @@ could freely overlap without conflict (this project's don't -- 10.1.0.0/16
 vs 10.2.0.0/16 -- but nothing here depends on that).
 """
 
+from pathlib import Path
+
 import aws_cdk as cdk
 from aws_cdk import CfnOutput, Stack, Tags
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
-from aws_cdk import aws_elasticloadbalancingv2_targets as elbv2_targets
-from aws_cdk import aws_iam as iam
+from aws_cdk import aws_logs as logs
 from cdk_nag import NagPackSuppression, NagSuppressions
 from constructs import Construct
 
@@ -31,6 +33,7 @@ import config
 from stacks.network_stack import NetworkStack
 
 PROVIDER_PORT = 8080
+PROVIDER_ASSETS_DIR = Path(__file__).parent / "assets" / "privatelink"
 
 
 class PrivateLinkStack(Stack):
@@ -58,64 +61,51 @@ class PrivateLinkStack(Stack):
             ec2.Peer.ipv4(provider_vpc.vpc_cidr_block), ec2.Port.tcp(PROVIDER_PORT), "provider-vpc (NLB targets by IP, preserves source)"
         )
 
-        provider_role = iam.Role(
-            self, "ProviderInstanceRole",
-            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
-            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
+        # ------------------------------------------------------------------
+        # Provider app: ECS Fargate, smallest task size. See
+        # threetier_stack.py's module docstring for why Fargate over EC2
+        # (separate vCPU quota pool, no host patching) -- the same reasoning
+        # applies here, and unlike threetier_stack.py's app tier, nothing
+        # references this instance's identity directly (no VPC Lattice
+        # INSTANCE-type target group involved), so no dedicated EC2 host is
+        # needed to preserve anything.
+        # ------------------------------------------------------------------
+        provider_cluster = ecs.Cluster(
+            self, "ProviderCluster", vpc=provider_vpc, container_insights_v2=ecs.ContainerInsights.DISABLED
         )
 
-        provider_user_data = ec2.UserData.for_linux()
-        provider_user_data.add_commands(
-            "set -e",
-            "mkdir -p /opt/provider",
-            "cat > /opt/provider/app.py << 'PYEOF'\n"
-            "import json\n"
-            "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
-            "\n"
-            "class Handler(BaseHTTPRequestHandler):\n"
-            "    def do_GET(self):\n"
-            "        body = json.dumps({\"message\": \"hello from the PrivateLink provider\", \"path\": self.path}).encode()\n"
-            "        self.send_response(200)\n"
-            "        self.send_header(\"Content-Type\", \"application/json\")\n"
-            "        self.send_header(\"Content-Length\", str(len(body)))\n"
-            "        self.end_headers()\n"
-            "        self.wfile.write(body)\n"
-            "\n"
-            f"ThreadingHTTPServer((\"0.0.0.0\", {PROVIDER_PORT}), Handler).serve_forever()\n"
-            "PYEOF",
-            "cat > /etc/systemd/system/provider-app.service << 'EOF'\n"
-            "[Unit]\n"
-            "Description=PrivateLink demo provider app\n"
-            "After=network.target\n"
-            "[Service]\n"
-            "ExecStart=/usr/bin/python3 /opt/provider/app.py\n"
-            "Restart=always\n"
-            "[Install]\n"
-            "WantedBy=multi-user.target\n"
-            "EOF",
-            "systemctl daemon-reload",
-            "systemctl enable --now provider-app",
+        provider_task_definition = ecs.FargateTaskDefinition(
+            self, "ProviderTaskDefinition",
+            cpu=256,
+            memory_limit_mib=512,
+        )
+        provider_task_definition.add_container(
+            "ProviderContainer",
+            image=ecs.ContainerImage.from_asset(str(PROVIDER_ASSETS_DIR)),
+            port_mappings=[ecs.PortMapping(container_port=PROVIDER_PORT)],
+            environment={"PORT": str(PROVIDER_PORT)},
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="provider", log_retention=logs.RetentionDays.ONE_WEEK),
         )
 
-        provider_instance = ec2.Instance(
-            self, "ProviderInstance",
-            vpc=provider_vpc,
+        provider_service = ecs.FargateService(
+            self, "ProviderService",
+            cluster=provider_cluster,
+            task_definition=provider_task_definition,
+            desired_count=2 if config.MULTI_AZ else 1,
             vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            instance_type=ec2.InstanceType(config.DEFAULT_INSTANCE_TYPE),
-            machine_image=ec2.MachineImage.latest_amazon_linux2023(),
-            security_group=provider_sg,
-            role=provider_role,
-            user_data=provider_user_data,
-            ssm_session_permissions=True,
-            block_devices=[ec2.BlockDevice(
-                device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True)
-            )],
+            security_groups=[provider_sg],
+            enable_execute_command=True,
+            circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
+            min_healthy_percent=0,
+            max_healthy_percent=200,
         )
 
         # ------------------------------------------------------------------
-        # NLB (internal) + target group, targeting the provider instance by
-        # ID -- a plain, correct NLB use, unrelated to inspection_stack.py's
-        # GWLB (see this file's module docstring).
+        # NLB (internal) + target group -- a plain, correct NLB use,
+        # unrelated to inspection_stack.py's GWLB (see this file's module
+        # docstring). IP target type, not INSTANCE -- same reason as
+        # threetier_stack.py's ALB target group (Fargate awsvpc mode has no
+        # host instance to register by id).
         # ------------------------------------------------------------------
         nlb = elbv2.NetworkLoadBalancer(
             self, "ProviderNlb",
@@ -128,9 +118,9 @@ class PrivateLinkStack(Stack):
             vpc=provider_vpc,
             port=PROVIDER_PORT,
             protocol=elbv2.Protocol.TCP,
-            target_type=elbv2.TargetType.INSTANCE,
-            targets=[elbv2_targets.InstanceTarget(provider_instance)],
+            target_type=elbv2.TargetType.IP,
         )
+        provider_service.attach_to_network_target_group(provider_target_group)
         nlb.add_listener(
             "ProviderListener",
             port=PROVIDER_PORT,
@@ -207,22 +197,30 @@ class PrivateLinkStack(Stack):
         NagSuppressions.add_stack_suppressions(self, [
             NagPackSuppression(
                 id="AwsSolutions-IAM4",
-                reason="AmazonSSMManagedInstanceCore is AWS-curated and appropriate for this lab's "
-                       "SSM-only instance access.",
+                reason="AmazonECSTaskExecutionRolePolicy is AWS-curated and is the standard execution "
+                       "role for Fargate tasks (image pull + log group write) -- not a hand-widened grant.",
             ),
             NagPackSuppression(
-                id="AwsSolutions-EC28",
-                reason="Detailed monitoring is extra cost with no security value for a lab instance.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-EC29",
-                reason="Termination protection would conflict with SPEC.md's `cdk destroy --all` "
-                       "teardown requirement.",
+                id="AwsSolutions-IAM5",
+                reason="Wildcards come from CDK's own Fargate task-definition-generated execution role "
+                       "policy (ECR/CloudWatch Logs access scoped by the framework, not hand-widened) and "
+                       "the ECS Exec (enable_execute_command) SSM channel permissions.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-ELB2",
                 reason="NLB access logging needs a dedicated log bucket -- not worth the added "
                        "infrastructure for this lab's internal provider-side NLB.",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-ECS4",
+                reason="Container Insights is extra CloudWatch cost with no security value for a lab "
+                       "meant to be built and torn down repeatedly.",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-ECS2",
+                reason="The only 'environment variable' is PORT=8080, a fixed, non-sensitive listen "
+                       "port -- not the kind of value AwsSolutions-ECS2 exists to catch (secrets/config "
+                       "that belong in Secrets Manager or SSM Parameter Store instead).",
             ),
         ])
         NagSuppressions.add_resource_suppressions(

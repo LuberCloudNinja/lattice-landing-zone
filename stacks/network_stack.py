@@ -391,11 +391,15 @@ class NetworkStack(Stack):
         # NOTE: the "temporary app-vpc test host" this section originally had
         # (SPEC.md Section 4's "from an SSM session on the app-vpc test host,
         # nc -vz ..." verify step) was removed -- threetier_stack.py's own
-        # AppAsg instances now serve that role, and the account's default
-        # EC2 vCPU quota (16, Standard A/C/D/H/I/M/R/T/Z family) left no
-        # headroom for both once the firewall fleet + NAT/libreswan/broker
-        # instances were running. Use an SSM session on an AppAsg instance
-        # for the verify steps instead.
+        # LatticeInstanceTargetHost (a small dedicated EC2 instance, kept
+        # around anyway since VPC Lattice's INSTANCE-type target group needs
+        # a real instance id -- see that stack's module docstring) now
+        # serves this role too. The account's default EC2 vCPU quota (16,
+        # Standard A/C/D/H/I/M/R/T/Z family) left no headroom for a
+        # dedicated test host once the firewall fleet + NAT/libreswan/broker
+        # instances were running, so this was removed rather than kept
+        # alongside it. Use an SSM session on that instance for the verify
+        # steps instead.
 
         # ------------------------------------------------------------------
         # Site-to-Site VPN as the Direct Connect stand-in (SPEC.md Section 4)

@@ -94,12 +94,12 @@ approving, same review you'd want even though this README exists.
 
 ## Verify (per layer)
 
-**Network / VPN** -- from an SSM session on one of `ThreeTierStack`'s
-`AppAsg` instances (app-vpc's own compute; the standalone test host this
-originally used was removed once the ASG existed -- see `network_stack.py`),
-confirm the VPN path to the simulated on-prem broker:
+**Network / VPN** -- from an SSM session on `ThreeTierStack`'s
+`LatticeInstanceTargetHost` (app-vpc's one remaining EC2 instance; the real
+app tier runs on Fargate, see that stack's module docstring), confirm the
+VPN path to the simulated on-prem broker:
 ```bash
-aws ssm start-session --target <AppAsgInstanceId> --profile deloitte
+aws ssm start-session --target <LatticeInstanceTargetHostId> --profile deloitte
 nc -vz <BrokerPrivateIp> 9092
 ```
 Give the libreswan tunnel a few minutes to come up first; check
@@ -193,40 +193,40 @@ All in `stacks/lattice_stack.py`, grouped with `# ---- L4x ----` comments
 matching the headings below.
 
 **L4a -- service network + first service**
-- `CfnServiceNetwork` (`auth_type=AWS_IAM`) -- line 110
-- `CfnService` (HTTP) -- line 114
-- `CfnTargetGroup` type `INSTANCE`, health-checked -- line 116
-- `CfnListener` (HTTP/80, default forward action = the "default rule") -- line 132
-- `CfnServiceNetworkServiceAssociation` -- line 163
-- `CfnServiceNetworkVpcAssociation` (app-vpc, with the SG below) -- line 168
+- `CfnServiceNetwork` (`auth_type=AWS_IAM`) -- line 77
+- `CfnService` (HTTP) -- line 81
+- `CfnTargetGroup` type `INSTANCE`, health-checked -- line 83 (targets `ThreeTierStack`'s `LatticeInstanceTargetHost` -- see that stack's module docstring for why the real app tier, on Fargate, can't fill this role itself)
+- `CfnListener` (HTTP/80, default forward action = the "default rule") -- line 99
+- `CfnServiceNetworkServiceAssociation` -- line 130
+- `CfnServiceNetworkVpcAssociation` (app-vpc, with the SG below) -- line 135
 
 **L4b -- all target-group types + rich rules**
-- `CfnTargetGroup` type `IP` -- line 178
-- `CfnTargetGroup` type `LAMBDA` (+ inline `lambda_.Function`) -- line 212
-- `CfnTargetGroup` type `ALB` (fronts `ThreeTierStack`'s ALB listener) -- line 220
-- Path-based rule (`/v1/*`) -- line 231
-- Header-based rule (`x-canary: true`) -- line 255
-- Weighted 90/10 canary rule -- line 281
+- `CfnTargetGroup` type `IP` -- line 145 (same dedicated host as L4a, addressed by IP)
+- `CfnTargetGroup` type `LAMBDA` (+ inline `lambda_.Function`) -- line 179
+- `CfnTargetGroup` type `ALB` (fronts `ThreeTierStack`'s ALB listener, backed by its Fargate service) -- line 187
+- Path-based rule (`/v1/*`) -- line 198
+- Header-based rule (`x-canary: true`) -- line 222
+- Weighted 90/10 canary rule -- line 248
 - AZ affinity: **not implemented** -- no such CloudFormation property exists on `CfnTargetGroup` as of this build (checked directly against the installed CDK L1), not an oversight
 
 **L4c -- HTTPS + custom domain + ACM + TLS passthrough**
-- HTTPS listener (443) + self-signed cert import + `custom_domain_name` -- line 328 (cert import helper at the bottom of the file)
-- Second service, `TLS_PASSTHROUGH` listener, service association -- lines 350/361/375
+- HTTPS listener (443) + self-signed cert import + `custom_domain_name` -- line 295 (cert import helper at the bottom of the file)
+- Second service, `TLS_PASSTHROUGH` listener, service association -- lines 317/328/342
 
 **L4d -- auth policies (zero-trust) + SG-on-association + managed prefix list**
-- Service-network `CfnAuthPolicy` -- line 403
-- Service-level `CfnAuthPolicy` -- line 417
-- SG on the VPC association (created line 156, associated line 168) referencing the `com.amazonaws.<region>.vpc-lattice` managed prefix list, looked up via `AwsCustomResource` -- line 385
+- Service-network `CfnAuthPolicy` -- line 370
+- Service-level `CfnAuthPolicy` -- line 384
+- SG on the VPC association (created line 123, associated line 135) referencing the `com.amazonaws.<region>.vpc-lattice` managed prefix list, looked up via `AwsCustomResource` -- line 352
 - SigV4 test script -- `stacks/assets/lattice/test-sigv4.py`
 
 **L4e -- resource gateway + resource configuration + service-network endpoint (hybrid)**
-- `CfnResourceGateway` -- line 441
-- `CfnResourceConfiguration` type `SINGLE`, pointed at the on-prem broker -- line 448
-- `CfnServiceNetworkResourceAssociation` -- line 459
-- Service-network VPC endpoint (`ec2.CfnVPCEndpoint`, type `ServiceNetwork`), in provider-vpc -- line 477
+- `CfnResourceGateway` -- line 408
+- `CfnResourceConfiguration` type `SINGLE`, pointed at the on-prem broker -- line 415
+- `CfnServiceNetworkResourceAssociation` -- line 426
+- Service-network VPC endpoint (`ec2.CfnVPCEndpoint`, type `ServiceNetwork`), in provider-vpc -- line 444
 
 **L4f -- observability + dual-stack + optional RAM share**
-- Access logs: service-network -> CloudWatch Logs -- line 509
-- Access logs: service -> S3 -- line 514
-- Dual-stack/IPv6 service + LAMBDA target group (`ip_address_type=IPV6`) + listener + association -- lines 525/526/540/554
-- AWS RAM share, guarded behind `config.ENABLE_RAM_SHARE` -- line 563 (else-branch prints the grant that would be created)
+- Access logs: service-network -> CloudWatch Logs -- line 476
+- Access logs: service -> S3 -- line 481
+- Dual-stack/IPv6 service + LAMBDA target group (`ip_address_type=IPV6`) + listener + association -- lines 492/493/507/521
+- AWS RAM share, guarded behind `config.ENABLE_RAM_SHARE` -- line 530 (else-branch prints the grant that would be created)
