@@ -29,12 +29,12 @@ AWS_PROFILE = "deloitte"
 # at `cdk synth` time. Still clearly placeholder text; still must be replaced
 # with real values (via env vars, or by editing the defaults here) before
 # PipelineStack is actually deployable.
-GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "REPLACE_ME_GITHUB_OWNER")
+GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "LuberCloudNinja")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "lattice-landing-zone")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 CODECONNECTIONS_ARN = os.environ.get(
     "CODECONNECTIONS_ARN",
-    f"arn:aws:codeconnections:{os.environ.get('CDK_DEFAULT_REGION', 'us-east-1')}:{AWS_ACCOUNT_ID}:connection/REPLACE-ME",
+    "arn:aws:codeconnections:us-east-1:458798438816:connection/6e3a1cd6-c967-4e48-b241-1a6bf6d41fa0",
 )
 
 # ---------------------------------------------------------------------------
