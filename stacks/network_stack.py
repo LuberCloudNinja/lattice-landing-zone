@@ -486,11 +486,14 @@ class NetworkStack(Stack):
         )
         vpn_connection.node.add_dependency(customer_gateway)
 
-        ec2.CfnVPNConnectionRoute(
-            self, "OnpremVpnStaticRoute",
-            vpn_connection_id=vpn_connection.ref,
-            destination_cidr_block=config.VPC_CIDRS["onprem"],
-        )
+        # NOT ec2.CfnVPNConnectionRoute here -- that's AWS::EC2::VPNConnectionRoute,
+        # valid only for VPN connections attached to a Virtual Private Gateway.
+        # This one has transit_gateway_id set instead, and AWS rejects
+        # VPNConnectionRoute against a TGW-attached VPN at deploy time
+        # ("Static routes for vpn-xxx must be added through the Transit
+        # Gateway API") -- the onprem CIDR's static route is added below, as
+        # a CfnTransitGatewayRoute in inspection_rt, once the VPN's TGW
+        # attachment id is known.
 
         # CloudFormation doesn't expose the VPN connection's auto-created TGW
         # attachment id as a GetAtt -- look it up with a scoped Custom
@@ -526,6 +529,19 @@ class NetworkStack(Stack):
             self, "OnpremVpnPropagateToInspectionRt",
             transit_gateway_attachment_id=vpn_tgw_attachment_id,
             transit_gateway_route_table_id=inspection_rt.ref,
+        )
+        # The onprem CIDR's static route (see the "NOT ec2.CfnVPNConnectionRoute"
+        # comment above) -- goes in inspection_rt specifically, matching every
+        # other spoke: north-south/east-west traffic already lands in
+        # inspection-vpc via spoke_rt's single default route, and this is
+        # what lets inspected traffic find its way back out to onprem.
+        # Propagation alone (above) wouldn't add this: static_routes_only=True
+        # means there's no BGP session to propagate FROM.
+        ec2.CfnTransitGatewayRoute(
+            self, "InspectionToOnpremViaVpn",
+            transit_gateway_route_table_id=inspection_rt.ref,
+            destination_cidr_block=config.VPC_CIDRS["onprem"],
+            transit_gateway_attachment_id=vpn_tgw_attachment_id,
         )
 
         # onprem-vpc's Private subnets (the broker's subnet) route AWS-side
