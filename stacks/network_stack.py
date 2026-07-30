@@ -434,10 +434,14 @@ class NetworkStack(Stack):
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
-        # describe-vpn-connections has no resource-level IAM support; the
-        # instance uses this at boot to discover its own tunnels' outside IPs
-        # (the only piece the CDK app itself can't know at synth time).
-        libreswan_role.add_to_policy(iam.PolicyStatement(actions=["ec2:DescribeVpnConnections"], resources=["*"]))
+        # describe-vpn-connections/describe-customer-gateways have no
+        # resource-level IAM support; the instance uses these at boot to
+        # discover its own VPN connection and tunnels' outside IPs -- it
+        # can't be told these via UserData (see the CfnEIP/UserData comment
+        # below for why), so it looks them up for itself instead.
+        libreswan_role.add_to_policy(iam.PolicyStatement(
+            actions=["ec2:DescribeVpnConnections", "ec2:DescribeCustomerGateways"], resources=["*"]
+        ))
 
         libreswan = ec2.Instance(
             self, "LibreswanCgw",
@@ -452,6 +456,14 @@ class NetworkStack(Stack):
             block_devices=_encrypted_root_volume(),
         )
 
+        # This EIP's InstanceId makes it depend on libreswan (the instance
+        # must exist first) -- so libreswan's own UserData (baked in at
+        # instance CREATE time) can NEVER reference this EIP's address, or
+        # any resource that itself depends on this EIP (OnpremCustomerGateway,
+        # OnpremVpnConnection, ...), without creating a CloudFormation
+        # circular dependency. UserData below discovers its own public IP
+        # and the resulting VPN connection ID at boot time (instance
+        # metadata + API filters) instead of taking them as CFN tokens.
         libreswan_eip = ec2.CfnEIP(self, "LibreswanEip", domain="vpc", instance_id=libreswan.instance_id)
 
         customer_gateway = ec2.CfnCustomerGateway(
@@ -536,8 +548,26 @@ class NetworkStack(Stack):
             "dnf install -y libreswan awscli",
             "sysctl -w net.ipv4.ip_forward=1",
             "echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-onprem-router.conf",
-            f"VPN_CONNECTION_ID={vpn_connection.attr_vpn_connection_id}",
             f"REGION={region}",
+            # Own public IP (== this EIP once associated) and the resulting
+            # VPN connection id, both discovered at boot rather than passed
+            # in as CFN tokens -- see the CfnEIP comment above.
+            "TOKEN=$(curl -s -X PUT \"http://169.254.169.254/latest/api/token\" "
+            "-H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\")",
+            "for i in 1 2 3 4 5 6 7 8 9 10; do "
+            "MY_PUBLIC_IP=$(curl -s -f -H \"X-aws-ec2-metadata-token: $TOKEN\" "
+            "http://169.254.169.254/latest/meta-data/public-ipv4) "
+            "&& [ -n \"$MY_PUBLIC_IP\" ] && break || sleep 15; done",
+            "for i in 1 2 3 4 5 6 7 8 9 10; do "
+            "CGW_ID=$(aws ec2 describe-customer-gateways --filters \"Name=ip-address,Values=$MY_PUBLIC_IP\" "
+            "\"Name=state,Values=available\" --region \"$REGION\" "
+            "--query 'CustomerGateways[0].CustomerGatewayId' --output text) "
+            "&& [ \"$CGW_ID\" != \"None\" ] && [ -n \"$CGW_ID\" ] && break || sleep 15; done",
+            "for i in 1 2 3 4 5 6 7 8 9 10; do "
+            "VPN_CONNECTION_ID=$(aws ec2 describe-vpn-connections "
+            "--filters \"Name=customer-gateway-id,Values=$CGW_ID\" --region \"$REGION\" "
+            "--query 'VpnConnections[0].VpnConnectionId' --output text) "
+            "&& [ \"$VPN_CONNECTION_ID\" != \"None\" ] && [ -n \"$VPN_CONNECTION_ID\" ] && break || sleep 15; done",
             "for i in 1 2 3 4 5 6 7 8 9 10; do "
             "TUNNEL_INFO=$(aws ec2 describe-vpn-connections --vpn-connection-ids \"$VPN_CONNECTION_ID\" "
             "--region \"$REGION\" --output json) && break || sleep 15; done",
@@ -554,7 +584,7 @@ class NetworkStack(Stack):
             "  type=tunnel\n"
             "  ikev2=no\n"
             f"  left=%defaultroute\n"
-            f"  leftid={libreswan_eip.attr_public_ip}\n"
+            "  leftid=$MY_PUBLIC_IP\n"
             f"  leftsubnet={config.VPC_CIDRS['onprem']}\n"
             "  right=$OUTSIDE_IP_1\n"
             "  rightsubnet=0.0.0.0/0\n"
@@ -575,7 +605,7 @@ class NetworkStack(Stack):
             "  type=tunnel\n"
             "  ikev2=no\n"
             f"  left=%defaultroute\n"
-            f"  leftid={libreswan_eip.attr_public_ip}\n"
+            "  leftid=$MY_PUBLIC_IP\n"
             f"  leftsubnet={config.VPC_CIDRS['onprem']}\n"
             "  right=$OUTSIDE_IP_2\n"
             "  rightsubnet=0.0.0.0/0\n"
@@ -589,8 +619,8 @@ class NetworkStack(Stack):
             "  dpdtimeout=30\n"
             "  dpdaction=restart_by_peer\n"
             "EOF",
-            f"echo '{libreswan_eip.attr_public_ip} '\"$OUTSIDE_IP_1\"': PSK \"{psk_1}\"' >> /etc/ipsec.secrets",
-            f"echo '{libreswan_eip.attr_public_ip} '\"$OUTSIDE_IP_2\"': PSK \"{psk_2}\"' >> /etc/ipsec.secrets",
+            f"echo \"$MY_PUBLIC_IP $OUTSIDE_IP_1: PSK \\\"{psk_1}\\\"\" >> /etc/ipsec.secrets",
+            f"echo \"$MY_PUBLIC_IP $OUTSIDE_IP_2: PSK \\\"{psk_2}\\\"\" >> /etc/ipsec.secrets",
             "chmod 600 /etc/ipsec.secrets",
             "systemctl enable ipsec",
             "systemctl restart ipsec",
