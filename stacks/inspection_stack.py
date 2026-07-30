@@ -339,6 +339,31 @@ class InspectionStack(Stack):
             route.node.add_dependency(endpoint)
 
         # ------------------------------------------------------------------
+        # app-vpc-local GWLB Endpoints -- a VPC Endpoint can only be a route
+        # target for route tables in its OWN vpc ("route table X and
+        # interface Y belong to different networks" is what AWS returns
+        # otherwise, confirmed by attempting to route app-vpc's ingress_rt
+        # directly at the inspection-vpc-scoped gwlb_endpoints above). The
+        # centralized GWLB itself still lives in inspection-vpc; these
+        # endpoints are just app-vpc's on-ramp to the same VPC Endpoint
+        # Service, one per app-vpc AZ, co-located with the NAT Gateway's
+        # Public subnet (a GWLB Endpoint and a NAT Gateway are different
+        # resource types and coexist in one subnet without conflict).
+        # ------------------------------------------------------------------
+        app_vpc_public_subnets = app_vpc.select_subnets(subnet_group_name="Public").subnets
+        app_gwlb_endpoints: list[ec2.CfnVPCEndpoint] = []
+        for pub_subnet in app_vpc_public_subnets:
+            ep = ec2.CfnVPCEndpoint(
+                self, f"AppVpcGwlbEndpoint{pub_subnet.node.id}",
+                vpc_id=app_vpc.vpc_id,
+                vpc_endpoint_type="GatewayLoadBalancer",
+                service_name=service_name,
+                subnet_ids=[pub_subnet.subnet_id],
+            )
+            ep.node.add_dependency(endpoint_service)
+            app_gwlb_endpoints.append(ep)
+
+        # ------------------------------------------------------------------
         # IGW ingress (edge-association) route table in app-vpc -- the piece
         # most commonly missed. Without it, inbound reply packets for
         # outbound-initiated (north-south) sessions arrive at app-vpc's IGW
@@ -358,23 +383,14 @@ class InspectionStack(Stack):
             route_table_id=ingress_rt.ref,
         )
 
-        for pub_subnet in app_vpc.select_subnets(subnet_group_name="Public").subnets:
-            match = next(
-                (ep for ep, gwlbe_subnet in zip(gwlb_endpoints, gwlb_endpoint_subnets)
-                 if gwlbe_subnet.availability_zone == pub_subnet.availability_zone),
-                None,
-            )
-            if match is None:
-                # inspection-vpc has more AZs than app-vpc currently has NAT
-                # gateways in (e.g. MULTI_AZ=false, config.INSPECTION_AZ_COUNT=2)
-                # -- nothing to redirect for an AZ with no NAT/Public subnet.
-                continue
-            ec2.CfnRoute(
+        for pub_subnet, endpoint in zip(app_vpc_public_subnets, app_gwlb_endpoints):
+            route = ec2.CfnRoute(
                 self, f"IngressRedirect{pub_subnet.node.id}",
                 route_table_id=ingress_rt.ref,
                 destination_cidr_block=pub_subnet.ipv4_cidr_block,
-                vpc_endpoint_id=match.ref,
+                vpc_endpoint_id=endpoint.ref,
             )
+            route.node.add_dependency(endpoint)
 
         # ------------------------------------------------------------------
         # Firewall fleet: one ASG PER AZ (not one shared multi-AZ ASG -- a
