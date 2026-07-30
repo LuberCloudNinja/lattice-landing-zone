@@ -36,8 +36,19 @@ class LandingZoneStage(Stage):
         # build the GWLB endpoints, IGW ingress routing, and firewall fleet.
         network = NetworkStack(self, "NetworkStack")
         inspection = InspectionStack(self, "InspectionStack", network=network)
+        privatelink = PrivateLinkStack(self, "PrivateLinkStack", network=network)
         threetier = ThreeTierStack(self, "ThreeTierStack", network=network)
-        PrivateLinkStack(self, "PrivateLinkStack", network=network)
+        # Explicit ordering, not a functional dependency -- both stacks add a
+        # small EC2 instance to app-vpc/provider-vpc's shared account-level
+        # vCPU quota (LatticeInstanceTargetHost, ProviderInstance during any
+        # future EC2 rollback), and deploying them in the same parallel wave
+        # repeatedly raced: whichever stack was mid-replacement (freeing
+        # vCPU) hadn't finished before the other tried to claim it, hitting
+        # "requested more vCPU capacity than your current vCPU limit"
+        # even with headroom that would exist a few seconds later. Forcing
+        # PrivateLinkStack to finish first removes the race outright instead
+        # of relying on retry timing.
+        threetier.add_dependency(privatelink)
         lattice = LatticeStack(self, "LatticeStack", network=network, threetier=threetier)
         ObservabilityStack(self, "ObservabilityStack", inspection=inspection, threetier=threetier, lattice=lattice)
         ResourceGroupsStack(self, "ResourceGroupsStack")
