@@ -1,19 +1,23 @@
-"""pipeline_stack.py -- self-mutating CDK Pipeline sourced from GitHub (SPEC.md Section 7).
+"""pipeline_stack.py -- self-mutating CDK Pipeline sourced from CodeCommit (SPEC.md Section 7).
 
 Deploy once by hand (`cdk deploy PipelineStack --profile deloitte`); every
-push to config.GITHUB_BRANCH after that re-synths, self-mutates the pipeline
-if this file itself changed, and deploys LandingZoneStage automatically --
-gated behind the manual approval step below.
+push to config.CODECOMMIT_BRANCH after that re-synths, self-mutates the
+pipeline if this file itself changed, and deploys LandingZoneStage
+automatically -- gated behind the manual approval step below.
 
-One-time manual step this code cannot do for you (SPEC.md Section 7): the
-CodeConnections connection identified by config.CODECONNECTIONS_ARN must
-already exist and be authorized with GitHub via the console
-(CodePipeline -> Settings -> Connections) before this stack can deploy --
-CDK cannot perform that OAuth handshake. Everything else here is code.
+Originally sourced from GitHub via CodeConnections, but that requires a
+GitHub App to be separately *installed* on the target repo (not just
+OAuth-authorized) -- an easy-to-miss second step that left the Source stage
+failing with "No Branch [main] found" even once the connection itself
+showed AVAILABLE. Switched to CodeCommit (config.CODECOMMIT_REPO_NAME),
+which authenticates with plain IAM credentials and has no such handshake.
+The CodeCommit repo itself is created out of band (AWS CLI / console), not
+by this stack -- see README.md.
 """
 
 import aws_cdk as cdk
 from aws_cdk import Stack, pipelines
+from aws_cdk import aws_codecommit as codecommit
 from constructs import Construct
 
 import config
@@ -24,11 +28,10 @@ class PipelineStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        source = pipelines.CodePipelineSource.connection(
-            f"{config.GITHUB_OWNER}/{config.GITHUB_REPO}",
-            config.GITHUB_BRANCH,
-            connection_arn=config.CODECONNECTIONS_ARN,
+        repo = codecommit.Repository.from_repository_name(
+            self, "SourceRepo", config.CODECOMMIT_REPO_NAME
         )
+        source = pipelines.CodePipelineSource.code_commit(repo, config.CODECOMMIT_BRANCH)
 
         pipeline = pipelines.CodePipeline(
             self, "Pipeline",
@@ -38,6 +41,10 @@ class PipelineStack(Stack):
                 "Synth",
                 input=source,
                 install_commands=[
+                    # The standard CodeBuild image manages Python versions via
+                    # pyenv; 3.12.13 is installed but not selected globally by
+                    # default, so `python3.12` isn't on PATH without this.
+                    "pyenv global 3.12.13",
                     "python3.12 -m venv .venv",
                     ". .venv/bin/activate",
                     "pip install -r requirements.txt",

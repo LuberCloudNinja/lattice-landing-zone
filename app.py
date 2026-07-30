@@ -10,10 +10,9 @@ Two independent top-level things are instantiated, per SPEC.md Sections 7-8:
     separate LandingZoneStage("LandingZone") instance (a Stage can only be
     parented once, so the pipeline can't reuse the Dev one above).
 
-PipelineStack requires config.GITHUB_OWNER / CODECONNECTIONS_ARN etc. to be
-filled in (still `<<PLACEHOLDER>>` values per SPEC.md Section 0 until then)
-before it's actually deployable -- it still synths fine with placeholders,
-it just can't reach a real GitHub connection yet.
+PipelineStack sources from CodeCommit (config.CODECOMMIT_REPO_NAME /
+CODECOMMIT_BRANCH) -- no OAuth/App handshake required, just IAM
+credentials, so it's deployable as-is once the CodeCommit repo exists.
 """
 
 import aws_cdk as cdk

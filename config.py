@@ -19,23 +19,19 @@ AWS_REGION = os.environ.get("CDK_DEFAULT_REGION", "us-east-1")
 AWS_PROFILE = "deloitte"
 
 # ---------------------------------------------------------------------------
-# GitHub / CDK Pipeline (SPEC.md Section 7) -- fill in before building the
-# pipeline stack. SPEC.md Section 0 lists these as required before handoff.
+# CodeCommit / CDK Pipeline (SPEC.md Section 7) -- pipeline source.
 # ---------------------------------------------------------------------------
-# NOTE: defaults below are deliberately NOT angle-bracket "<<PLACEHOLDER>>"
-# style (SPEC.md Section 0's convention) -- these values flow directly into
-# AWS resource properties and tags, and "<"/">" fail CloudFormation's
-# character-pattern validation on several of them (e.g. IAM tag values) even
-# at `cdk synth` time. Still clearly placeholder text; still must be replaced
-# with real values (via env vars, or by editing the defaults here) before
-# PipelineStack is actually deployable.
-GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "LuberCloudNinja")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "lattice-landing-zone")
-GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
-CODECONNECTIONS_ARN = os.environ.get(
-    "CODECONNECTIONS_ARN",
-    "arn:aws:codeconnections:us-east-1:458798438816:connection/6e3a1cd6-c967-4e48-b241-1a6bf6d41fa0",
-)
+# GitHub (github.com/LuberCloudNinja/lattice-landing-zone) still exists as a
+# public mirror but is NOT the pipeline's source -- CodeConnections' GitHub
+# App required a separate, easy-to-miss "install the app on repos" step
+# beyond OAuth authorization, which kept the Source stage failing with
+# "No Branch [main] found" even once the connection itself showed AVAILABLE.
+# CodeCommit needs no third-party OAuth/App handshake at all -- IAM
+# credentials (a service-specific git credential on deloitte-admin) are
+# sufficient, so it's the more reliable single source of truth for the
+# pipeline itself.
+CODECOMMIT_REPO_NAME = os.environ.get("CODECOMMIT_REPO_NAME", "lattice-landing-zone")
+CODECOMMIT_BRANCH = os.environ.get("CODECOMMIT_BRANCH", "main")
 
 # ---------------------------------------------------------------------------
 # Web app source (threetier_stack.py) -- fill in before building that stack.
@@ -87,11 +83,12 @@ NAT_GATEWAY_COUNT = 1  # single, centralized -- put internet-needing things in a
 # per-layer AWS Resource Groups built in resource_groups_stack.py.
 # ---------------------------------------------------------------------------
 PROJECT_TAG = "lattice-lab"
+OWNER_TAG = os.environ.get("OWNER_TAG", "LuberCloudNinja")
 
 STANDARD_TAGS = {
     "Project": PROJECT_TAG,
     "Environment": "lab",
-    "Owner": GITHUB_OWNER,
+    "Owner": OWNER_TAG,
     "CostCenter": "interview-lab",
     "ManagedBy": "cdk",
 }

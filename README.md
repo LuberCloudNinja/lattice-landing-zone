@@ -27,13 +27,19 @@ pip install -r requirements.txt
 
 ## Before you deploy
 
-Fill in `config.py`'s `REPLACE_ME_*` defaults (or set the matching environment
-variables) before `PipelineStack` is deployable:
+`PipelineStack` sources from AWS CodeCommit (`config.CODECOMMIT_REPO_NAME` /
+`CODECOMMIT_BRANCH`, default `lattice-landing-zone` / `main`) -- create the
+repo once (`aws codecommit create-repository --repository-name
+lattice-landing-zone --profile deloitte`) and push this repo's `main` branch
+to it. No OAuth/App handshake required (unlike the GitHub CodeConnections
+path this project used originally -- see `pipeline_stack.py`'s module
+docstring for why that was dropped): a CodeCommit HTTPS git credential on
+the `deloitte-admin` IAM user (`aws iam create-service-specific-credential
+--user-name deloitte-admin --service-name codecommit.amazonaws.com`) is
+enough to `git push`.
 
 | Placeholder | Needed for |
 |---|---|
-| `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_BRANCH` | `PipelineStack`'s GitHub source |
-| `CODECONNECTIONS_ARN` | `PipelineStack`'s GitHub source -- **one-time manual step**: create and authorize this connection yourself in the console (CodePipeline -> Settings -> Connections); CDK cannot do the OAuth handshake |
 | `WEBAPP_SOURCE` | Not yet used -- `threetier_stack.py` currently deploys the placeholder app in `app/` (clearly labeled as such) instead. Swap `app/` for the real app and redeploy `ThreeTierStack` whenever this is provided |
 
 `LandingZoneStage("LandingZone-Dev")` (direct `cdk deploy --all` path) needs
