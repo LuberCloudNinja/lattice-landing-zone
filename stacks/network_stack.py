@@ -388,29 +388,14 @@ class NetworkStack(Stack):
 
         self.inspection_nat_instance = inspection_nat
 
-        # ------------------------------------------------------------------
-        # Temporary app-vpc test host -- SPEC.md Section 4's own verify step
-        # ("from an SSM session on the app-vpc test host, nc -vz ...") needs
-        # something in app-vpc to test from, and threetier_stack.py (the
-        # real source of app-vpc compute) is still an empty skeleton. This
-        # is superseded once that stack's ASG instances exist; harmless to
-        # leave running in the meantime (SSM only, no inbound rules at all).
-        # ------------------------------------------------------------------
-        test_host_role = iam.Role(
-            self, "AppTestHostRole",
-            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
-            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
-        )
-        self.app_test_host = ec2.Instance(
-            self, "AppTestHost",
-            vpc=self.app_vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            instance_type=ec2.InstanceType(config.DEFAULT_INSTANCE_TYPE),
-            machine_image=ec2.MachineImage.latest_amazon_linux2023(),
-            role=test_host_role,
-            ssm_session_permissions=True,
-            block_devices=_encrypted_root_volume(),
-        )
+        # NOTE: the "temporary app-vpc test host" this section originally had
+        # (SPEC.md Section 4's "from an SSM session on the app-vpc test host,
+        # nc -vz ..." verify step) was removed -- threetier_stack.py's own
+        # AppAsg instances now serve that role, and the account's default
+        # EC2 vCPU quota (16, Standard A/C/D/H/I/M/R/T/Z family) left no
+        # headroom for both once the firewall fleet + NAT/libreswan/broker
+        # instances were running. Use an SSM session on an AppAsg instance
+        # for the verify steps instead.
 
         # ------------------------------------------------------------------
         # Site-to-Site VPN as the Direct Connect stand-in (SPEC.md Section 4)
@@ -704,7 +689,6 @@ class NetworkStack(Stack):
         CfnOutput(self, "LibreswanInstanceId", value=libreswan.instance_id)
         CfnOutput(self, "BrokerPrivateIp", value=self.broker.instance_private_ip)
         CfnOutput(self, "BrokerInstanceId", value=self.broker.instance_id)
-        CfnOutput(self, "AppTestHostInstanceId", value=self.app_test_host.instance_id)
 
         # ------------------------------------------------------------------
         # cdk-nag suppressions (SPEC.md Section 10: "document any

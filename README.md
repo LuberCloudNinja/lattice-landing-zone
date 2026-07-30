@@ -94,10 +94,12 @@ approving, same review you'd want even though this README exists.
 
 ## Verify (per layer)
 
-**Network / VPN** -- from an SSM session on `AppTestHostInstanceId`
-(`NetworkStack` output), confirm the VPN path to the simulated on-prem broker:
+**Network / VPN** -- from an SSM session on one of `ThreeTierStack`'s
+`AppAsg` instances (app-vpc's own compute; the standalone test host this
+originally used was removed once the ASG existed -- see `network_stack.py`),
+confirm the VPN path to the simulated on-prem broker:
 ```bash
-aws ssm start-session --target <AppTestHostInstanceId> --profile deloitte
+aws ssm start-session --target <AppAsgInstanceId> --profile deloitte
 nc -vz <BrokerPrivateIp> 9092
 ```
 Give the libreswan tunnel a few minutes to come up first; check

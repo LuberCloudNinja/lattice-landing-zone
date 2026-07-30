@@ -7,8 +7,8 @@ requests are denied.
 The service's auth policies (ServiceNetworkAuthPolicy / ServiceAuthPolicy)
 condition on aws:SourceVpc == app-vpc's VPC id. That means:
   - This MUST be run from inside app-vpc (e.g. an SSM session on
-    ThreeTierStack's app-tier instance, or NetworkStack's AppTestHost) --
-    running it from a laptop over the public internet will get denied even
+    ThreeTierStack's app-tier instance) -- running it from a laptop over
+    the public internet will get denied even
     with a perfectly valid SigV4 signature, because the source VPC condition
     won't match at all.
   - The IAM principal signing the request needs `vpc-lattice-svcs:Invoke`

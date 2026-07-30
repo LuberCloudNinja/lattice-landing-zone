@@ -167,11 +167,22 @@ class PrivateLinkStack(Stack):
             ec2.Peer.ipv4(app_vpc.vpc_cidr_block), ec2.Port.tcp(PROVIDER_PORT), "app-vpc"
         )
 
+        # A VPC Endpoint Service only supports the AZs its backing NLB
+        # actually has nodes in (provider_vpc's own AZ count, independent of
+        # app_vpc's -- app_vpc needs >=2 AZs for RDS's DBSubnetGroup
+        # requirement per network_stack.py, provider_vpc has no such forced
+        # requirement and stays on the general MULTI_AZ-driven az_count).
+        # Selecting all of app_vpc's Private subnets unrestricted would try
+        # to place an ENI in an AZ the service doesn't support ("does not
+        # support the availability zone of the subnet") whenever the two
+        # VPCs' AZ counts differ -- restrict to the AZs the NLB is actually
+        # in.
+        nlb_azs = [s.availability_zone for s in provider_vpc.select_subnets(subnet_group_name="Private").subnets]
         interface_endpoint = ec2.InterfaceVpcEndpoint(
             self, "ProviderInterfaceEndpoint",
             vpc=app_vpc,
             service=ec2.InterfaceVpcEndpointService(service_name, PROVIDER_PORT),
-            subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+            subnets=ec2.SubnetSelection(subnet_group_name="Private", availability_zones=nlb_azs),
             security_groups=[consumer_sg],
             private_dns_enabled=False,
         )
