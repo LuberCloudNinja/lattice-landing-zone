@@ -62,6 +62,50 @@ class PrivateLinkStack(Stack):
         )
 
         # ------------------------------------------------------------------
+        # VPC endpoints Fargate needs to even START in provider-vpc.
+        # provider-vpc's Private subnets are PRIVATE_ISOLATED with no NAT
+        # Gateway and no route to an IGW at all (SPEC.md's "one NAT gateway
+        # total, in app-vpc" -- provider-vpc gets none) -- confirmed the
+        # hard way: the Fargate task failed with "unable to pull registry
+        # auth from Amazon ECR: ... dial tcp ...:443: i/o timeout" because
+        # it had no path to ECR's API at all. ECR API (auth), ECR Docker
+        # (image manifest/layers), CloudWatch Logs (the aws_logs driver
+        # below), and S3 (ECR's layer storage backend) are the minimum set
+        # for a Fargate task in a fully-isolated subnet. Scoped to `self`
+        # explicitly (not provider_vpc.add_interface_endpoint(...), which
+        # would anchor the new resource in NetworkStack's tree instead --
+        # same cross-stack-scoping class of bug as inspection_stack.py's
+        # CfnRoute comment explains).
+        # ------------------------------------------------------------------
+        vpc_endpoint_sg = ec2.SecurityGroup(
+            self, "ProviderVpcEndpointSg",
+            vpc=provider_vpc,
+            description="Interface endpoints (ECR/Logs) for the Fargate provider task -- inbound from provider-vpc only",
+            allow_all_outbound=True,
+        )
+        vpc_endpoint_sg.add_ingress_rule(
+            ec2.Peer.ipv4(provider_vpc.vpc_cidr_block), ec2.Port.tcp(443), "provider-vpc"
+        )
+        for service_id, service in {
+            "Ecr": ec2.InterfaceVpcEndpointAwsService.ECR,
+            "EcrDocker": ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+            "Logs": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+        }.items():
+            ec2.InterfaceVpcEndpoint(
+                self, f"Provider{service_id}Endpoint",
+                vpc=provider_vpc,
+                service=service,
+                subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+                security_groups=[vpc_endpoint_sg],
+            )
+        ec2.GatewayVpcEndpoint(
+            self, "ProviderS3Endpoint",
+            vpc=provider_vpc,
+            service=ec2.GatewayVpcEndpointAwsService.S3,
+            subnets=[ec2.SubnetSelection(subnet_group_name="Private")],
+        )
+
+        # ------------------------------------------------------------------
         # Provider app: ECS Fargate, smallest task size. See
         # threetier_stack.py's module docstring for why Fargate over EC2
         # (separate vCPU quota pool, no host patching) -- the same reasoning
