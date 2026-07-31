@@ -150,12 +150,31 @@ class PrivateLinkStack(Stack):
         # docstring). IP target type, not INSTANCE -- same reason as
         # threetier_stack.py's ALB target group (Fargate awsvpc mode has no
         # host instance to register by id).
+        #
+        # Explicit security group -- NLBs now support them (a newer
+        # AWS/CDK feature; classic NLBs never needed one), and when you
+        # don't pass one, CDK auto-creates a locked-down placeholder with
+        # zero ingress and no real egress. Confirmed the hard way: the
+        # Fargate task ran fine (no crash, no exit code) but its NLB
+        # target group health check failed continuously -- the NLB's own
+        # auto-generated security group couldn't send it any traffic at
+        # all, health check included.
         # ------------------------------------------------------------------
+        nlb_sg = ec2.SecurityGroup(
+            self, "ProviderNlbSg",
+            vpc=provider_vpc,
+            description="Provider NLB -- inbound from provider-vpc (PrivateLink consumers), outbound to the Fargate target",
+            allow_all_outbound=True,
+        )
+        nlb_sg.add_ingress_rule(
+            ec2.Peer.ipv4(provider_vpc.vpc_cidr_block), ec2.Port.tcp(PROVIDER_PORT), "provider-vpc"
+        )
         nlb = elbv2.NetworkLoadBalancer(
             self, "ProviderNlb",
             vpc=provider_vpc,
             internet_facing=False,
             vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+            security_groups=[nlb_sg],
         )
         provider_target_group = elbv2.NetworkTargetGroup(
             self, "ProviderTargetGroup",
