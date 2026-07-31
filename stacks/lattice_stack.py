@@ -45,6 +45,7 @@ from stacks.threetier_stack import ThreeTierStack
 
 APP_TIER_PORT = 8080  # must match threetier_stack.py's APP_TIER_PORT
 LAB_CUSTOM_DOMAIN = "lattice-lab.internal.example"  # label only -- see L4c
+LAB_TLS_CUSTOM_DOMAIN = "tls.lattice-lab.internal.example"  # tls_service's own domain -- see L4c
 
 
 class LatticeStack(Stack):
@@ -191,7 +192,7 @@ class LatticeStack(Stack):
             config=vl.CfnTargetGroup.TargetGroupConfigProperty(
                 port=80, protocol="HTTP", vpc_identifier=app_vpc.vpc_id,
             ),
-            targets=[vl.CfnTargetGroup.TargetProperty(id=threetier.app_listener.listener_arn)],
+            targets=[vl.CfnTargetGroup.TargetProperty(id=threetier.alb.load_balancer_arn)],
         )
 
         # Path-based: /v1/* -> tgA (ip_target_group)
@@ -314,7 +315,18 @@ class LatticeStack(Stack):
         # (the Lattice/CFN resources) but not yet end-to-end testable --
         # add a TLS listener on the target (e.g. nginx + this same
         # self-signed cert) before treating this path as verified.
+        #
+        # VPC Lattice requires a TLS_PASSTHROUGH listener's service to have
+        # a custom domain name (confirmed live: "TLS_PASSTHROUGH listener
+        # can only be created for a service with a custom domain name") --
+        # it needs its own domain distinct from the main `service`'s, since
+        # reusing the same custom_domain_name across two services would
+        # collide. Reuses the same self-signed cert (its CN doesn't need to
+        # match here -- Lattice never terminates TLS in passthrough mode, so
+        # the cert isn't used for validation, only to satisfy the schema).
         tls_service = vl.CfnService(self, "TlsPassthroughService", name="lattice-lab-tls", auth_type="AWS_IAM")
+        tls_service.certificate_arn = cert_arn
+        tls_service.custom_domain_name = LAB_TLS_CUSTOM_DOMAIN
         tls_target_group = vl.CfnTargetGroup(
             self, "TlsPassthroughTargetGroup",
             type="INSTANCE",
@@ -484,19 +496,22 @@ class LatticeStack(Stack):
             destination_arn=access_logs_bucket.bucket_arn,
         )
 
-        # Dual-stack/IPv6 demo: a dedicated small service + LAMBDA target
-        # group with ip_address_type=IPV6 -- LAMBDA targets are invoked via
-        # Lambda's own network path (not real IP routing), so this
-        # demonstrates IPv6 client-addressing on the Lattice side without
-        # needing IPv6-enabled VPC subnets anywhere in this project.
+        # Second Lambda-backed service, on its own service + listener +
+        # association -- shows a service network fanning out to more than
+        # one independently-routable service. NOTE: this was originally
+        # meant to double as an IPv6/dual-stack demo via
+        # ip_address_type=IPV6 on the target group config, but VPC Lattice's
+        # API rejects that outright for LAMBDA-type target groups (confirmed
+        # live: "Config contains invalid properties for Lambda Target
+        # Group") -- ip_address_type is only accepted on IP-type target
+        # groups, which would need real IPv6-enabled VPC subnets to
+        # exercise, deliberately out of scope for this lab.
         dualstack_service = vl.CfnService(self, "DualStackService", name="lattice-lab-dualstack", auth_type="AWS_IAM")
         dualstack_target_group = vl.CfnTargetGroup(
             self, "DualStackLambdaTargetGroup",
             type="LAMBDA",
             name="lattice-lab-dualstack-tg",
-            config=vl.CfnTargetGroup.TargetGroupConfigProperty(
-                lambda_event_structure_version="V1", ip_address_type="IPV6",
-            ),
+            config=vl.CfnTargetGroup.TargetGroupConfigProperty(lambda_event_structure_version="V1"),
             targets=[vl.CfnTargetGroup.TargetProperty(id=canary_lambda.function_arn)],
         )
         canary_lambda.add_permission(
@@ -603,11 +618,18 @@ class LatticeStack(Stack):
         cert_dir.mkdir(parents=True, exist_ok=True)
         cert_path = cert_dir / "cert.pem"
         key_path = cert_dir / "key.pem"
+        # SAN covers both LAB_CUSTOM_DOMAIN (main service) and
+        # LAB_TLS_CUSTOM_DOMAIN (tls_service) -- VPC Lattice validates
+        # customDomainName against the certificate even for TLS_PASSTHROUGH
+        # (confirmed live: "customDomainName does not match the provided
+        # certificate"), so one cert needs to satisfy both rather than
+        # importing a second certificate for the second service.
         subprocess.run(
             [
                 "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                 "-keyout", str(key_path), "-out", str(cert_path),
                 "-days", "3650", "-subj", f"/CN={LAB_CUSTOM_DOMAIN}",
+                "-addext", f"subjectAltName=DNS:{LAB_CUSTOM_DOMAIN},DNS:{LAB_TLS_CUSTOM_DOMAIN}",
             ],
             check=True, capture_output=True,
         )

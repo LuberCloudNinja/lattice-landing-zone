@@ -225,8 +225,8 @@ matching the headings below.
 - `CfnServiceNetworkResourceAssociation` -- line 426
 - Service-network VPC endpoint (`ec2.CfnVPCEndpoint`, type `ServiceNetwork`), in provider-vpc -- line 444
 
-**L4f -- observability + dual-stack + optional RAM share**
+**L4f -- observability + second Lambda-backed service + optional RAM share**
 - Access logs: service-network -> CloudWatch Logs -- line 476
 - Access logs: service -> S3 -- line 481
-- Dual-stack/IPv6 service + LAMBDA target group (`ip_address_type=IPV6`) + listener + association -- lines 492/493/507/521
+- Second LAMBDA target group + service + listener + association, demonstrating a service network fanning out to multiple independent services -- lines 492/493/507/521. Originally intended to also demo `ip_address_type=IPV6`, but VPC Lattice's API rejects that property outright on LAMBDA-type target groups (confirmed live); it's only valid on IP-type target groups, which would need real IPv6-enabled VPC subnets, out of scope for this lab.
 - AWS RAM share, guarded behind `config.ENABLE_RAM_SHARE` -- line 530 (else-branch prints the grant that would be created)
