@@ -53,6 +53,16 @@ class PipelineStack(Stack):
                     ". .venv/bin/activate",
                     "npx cdk synth",
                 ],
+                # TEMPORARY, deliberately -- Cloud WAN's core network +
+                # attachments cost real money per-attachment/per-GB on top
+                # of the TGW this project already runs (see README.md's
+                # cost warning); this is meant to be deployed for a demo,
+                # toured, then torn down, not left on as the pipeline's
+                # permanent default. Revert this to unset (or explicitly
+                # "false") once the demo is done, BEFORE the next pipeline
+                # run, so Cloud WAN doesn't silently stay in the synth
+                # target after `cdk destroy`.
+                env={"ENABLE_CLOUDWAN": "true"},
             ),
         )
 

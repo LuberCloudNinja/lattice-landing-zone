@@ -41,6 +41,7 @@ from constructs import Construct
 
 import config
 from stacks.network_stack import NetworkStack
+from stacks.security_stack import SecurityStack
 from stacks.threetier_stack import ThreeTierStack
 
 APP_TIER_PORT = 8080  # must match threetier_stack.py's APP_TIER_PORT
@@ -53,7 +54,8 @@ class LatticeStack(Stack):
     hybrid resource gateway, and observability -- SPEC.md Section 5 (L4a-L4f)."""
 
     def __init__(
-        self, scope: Construct, construct_id: str, *, network: NetworkStack, threetier: ThreeTierStack, **kwargs
+        self, scope: Construct, construct_id: str, *,
+        network: NetworkStack, threetier: ThreeTierStack, security: SecurityStack, **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.LATTICE)
@@ -468,13 +470,19 @@ class LatticeStack(Stack):
         access_logs_group = logs.LogGroup(
             self, "ServiceNetworkAccessLogs",
             retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
             removal_policy=RemovalPolicy.DESTROY,
         )
         access_logs_bucket = s3.Bucket(
             self, "ServiceAccessLogsBucket",
+            versioned=True,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            encryption=s3.BucketEncryption.S3_MANAGED,
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=security.buckets_key,
+            bucket_key_enabled=True,
             enforce_ssl=True,
+            server_access_logs_bucket=security.s3_access_logs_bucket,
+            server_access_logs_prefix="lattice-access-logs-bucket/",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
@@ -485,6 +493,12 @@ class LatticeStack(Stack):
             resources=[access_logs_bucket.arn_for_objects("*")],
             conditions={"StringEquals": {"aws:SourceAccount": self.account}},
         ))
+        # SSE-KMS destination: the bucket policy above authorizes the
+        # PutObject call itself, but the underlying KMS encrypt also needs
+        # its own grant to the same service principal -- both are required
+        # independently for SSE-KMS log delivery (the same pattern
+        # governance_stack.py's CloudTrail trail needs for its own bucket).
+        security.buckets_key.grant_encrypt_decrypt(iam.ServicePrincipal("vpc-lattice.amazonaws.com"))
         vl.CfnAccessLogSubscription(
             self, "ServiceNetworkAccessLogsSubscription",
             resource_identifier=service_network.attr_arn,

@@ -57,6 +57,14 @@ instances), not an oversight to fix before a "real" deployment.
 cdk bootstrap aws://458798438816/us-east-1 --profile deloitte
 ```
 
+Only if you plan to turn on `ENABLE_CLOUDWAN` (off by default -- see
+"Multi-Region AWS Cloud WAN" below): also bootstrap the second region,
+*before* deploying, since `region2_stack.py` deploys into it directly:
+
+```bash
+cdk bootstrap aws://458798438816/us-east-2 --profile deloitte
+```
+
 ## Deploy
 
 **Fast local iteration (no pipeline, recommended for building/testing one
@@ -76,9 +84,16 @@ cdk deploy PipelineStack --profile deloitte   # one-time; every push after this 
 ```
 
 Either path deploys stacks in dependency order:
-`NetworkStack -> InspectionStack -> ThreeTierStack -> PrivateLinkStack ->
-LatticeStack -> ObservabilityStack -> ResourceGroupsStack -> DiagramStack`
-(`KafkaStack` stays off; see Feature flags below).
+`SecurityStack -> NetworkStack -> InspectionStack -> ThreeTierStack ->
+PrivateLinkStack -> LatticeStack -> ObservabilityStack -> ResourceGroupsStack
+-> DiagramStack -> GovernanceStack -> DriftRemediationStack`
+(`KafkaStack` and `CloudWanStack`/`Region2Stack` stay off; see Feature flags
+below). `SecurityStack` deploys FIRST -- every other stack imports its CMKs
+and permissions boundary as constructor props.
+
+**Scope B (`org-governance/`) is a separate app, deployed separately, into a
+different (management) account -- see `org-governance/README.md`.** It is
+never part of the `cdk deploy --all` or pipeline path above.
 
 `cdk deploy` will show a full plan and prompt for approval before touching
 AWS -- review resource counts and any `IAM Statement Changes` there before
@@ -91,6 +106,75 @@ approving, same review you'd want even though this README exists.
 | `MULTI_AZ` | `false` | Flips non-HA tiers (onprem-vpc/provider-vpc AZ count, ThreeTierStack/PrivateLinkStack's Fargate desired task count) from single-AZ/single-task to 2. Does **not** affect app-vpc, which is fixed at >=2 AZs regardless (originally an RDS DBSubnetGroup requirement, kept after that stack's DynamoDB swap -- see network_stack.py), or the inspection VPC, which is always 2 AZs (`config.INSPECTION_AZ_COUNT`) with 2 firewall appliances per AZ (`config.FIREWALL_APPLIANCES_PER_AZ`) regardless -- that's a fixed HA requirement, not a cost/HA trade-off. |
 | `ENABLE_KAFKA` | `false` | `KafkaStack` isn't instantiated at all until this is `true` -- deploy everything else first, per SPEC.md's "deploy LAST" instruction. |
 | `ENABLE_RAM_SHARE` / `SECOND_ACCOUNT_ID` | off | Set `SECOND_ACCOUNT_ID` to actually create the AWS RAM cross-account share of the Lattice service network; otherwise `LatticeStack` prints what *would* be created (`RamShareNotCreated` output). |
+| `REMEDIATION_EMAIL` | `luberguilarte@gmail.com` | Email subscribed to `DriftRemediationStack`'s `governance-alerts` SNS topic -- confirm the subscription (check your inbox for a "AWS Notification - Subscription Confirmation" email) right after first deploy, or you won't receive anything. |
+| `DRY_RUN` | `false` | `true` makes the drift-remediator Lambda alert-only for every manual change it detects -- never deletes anything, regardless of tags. Useful for a first pass to see what it *would* have done before trusting it to actually delete. |
+| `ENABLE_CLOUDWAN` | `false` | `CloudWanStack`/`Region2Stack` aren't instantiated at all until this is `true`. **Materially more expensive than the TGW already in use** -- see "Multi-Region AWS Cloud WAN" below before turning this on. |
+| `SECOND_REGION` | `us-east-2` | Where `Region2Stack` deploys when `ENABLE_CLOUDWAN=true`. Requires bootstrapping that region first (see Bootstrap above). |
+
+## Security + Governance
+
+Deployed by default (not gated behind a flag -- CloudTrail/Config/Security
+Hub/GuardDuty/a single Lambda cost cents at this scale, not dollars):
+
+- **`SecurityStack`** -- five customer-managed KMS keys (logs, buckets, ebs,
+  secrets, sns; rotation on), a permissions boundary applied to every IAM
+  role this project's own code authors (see that stack's module docstring
+  for why it's *not* a blanket Aspect over the whole app -- it would also
+  catch CDK's own internal custom-resource roles, whose IAM needs aren't
+  something `cdk synth` alone can verify), IAM Access Analyzer, and the
+  shared S3 server-access-log destination bucket every other bucket in this
+  project points to.
+- **`GovernanceStack`** -- CloudTrail (multi-region, log file validation,
+  CMK-encrypted + versioned S3 + CloudWatch Logs), AWS Config (all resource
+  types, 8 managed rules: required-tags, S3 versioning/encryption, EBS
+  encryption, CloudTrail enabled, VPC Flow Logs, restricted SSH, no
+  admin-access IAM policies), Security Hub (AWS Foundational Security Best
+  Practices + CIS standards), GuardDuty.
+- **`DriftRemediationStack`** -- "only the pipeline may change infra," made
+  responsive: an EventBridge rule watches CloudTrail for mutating API calls
+  NOT made by this project's own CDK bootstrap execution role, and triggers
+  a Lambda that alerts via SNS (`governance-alerts`, emailed to
+  `REMEDIATION_EMAIL`) and -- only for a small, explicit allow-list of
+  resource types, and only if the resource lacks this project's own
+  `ManagedBy=cdk` tag, and only if the caller isn't tagged
+  `BreakGlass=true` -- deletes the one specific resource the event touched.
+  Read that stack's module docstring before changing anything here; the
+  scoping is the entire safety story for a Lambda with delete permissions.
+  Honors `DRY_RUN` (alert-only, never deletes).
+
+**Scope B** (org-wide OUs, SCPs, Control Tower -- the preventive,
+management-account-only counterpart to the detective controls above) lives
+in the separate `org-governance/` app; see its own README.md.
+
+## Multi-Region AWS Cloud WAN
+
+Off by default (`ENABLE_CLOUDWAN=false`). **Turn this on to demo it, tour
+it, then turn it back off and `cdk destroy`** -- Cloud WAN's core network
+and attachments bill per-attachment and per-GB processed in every attached
+edge location, on top of (not instead of) the Transit Gateway this project
+already runs; it is not a cheap thing to leave running.
+
+- **Segments** (`cloudwan_stack.py`'s policy-as-code, matching the
+  customer's own vocabulary): `FastTrack` (prod), `SkyPath` (proxy),
+  `SkyTransit` (hybrid/on-prem reachability), `Workload` (isolated --
+  `isolate-attachments=true`, nothing in it reaches anything else in it
+  without an explicit share). `SkyTransit` is explicitly shared into
+  `FastTrack` (`segment-actions`) -- the isolation-vs-sharing demo asked
+  for in L7 of the original build request: attach something to `Workload`
+  and confirm it can't reach `FastTrack`; attach something to `SkyTransit`
+  and confirm it can.
+- **VPC attachments**: `app-vpc` (`Workload`) and `provider-vpc`
+  (`FastTrack`, this project's closest analog to a shared-services VPC) in
+  us-east-1; a second small Workload VPC (`region2_stack.py`, a
+  NAT/IGW-free VPC reachable only via SSM) in us-east-2.
+- **TGW-peering migration path**: the existing Transit Gateway is
+  registered into the same Global Network and peered with the core
+  network, then one of its route tables is attached into the `SkyTransit`
+  segment -- an incremental, additive path onto Cloud WAN, not a
+  rip-and-replace of the TGW this project already depends on.
+- Attachments file themselves into the right segment automatically via a
+  `segment` tag + `attachment-policies` (tag-based association) -- nothing
+  wires a VPC into a segment by hand.
 
 ## Verify (per layer)
 
@@ -140,6 +224,32 @@ denied by design. Expect 403 without SigV4, 200 with it.
 **Architecture diagram** -- `open <DiagramUrl>` (`DiagramStack` output). To
 update the diagram after changing the architecture: edit
 `diagram-site/generate_diagram.py`, re-run it, then redeploy `DiagramStack`.
+The page now has three diagrams: the original inspection-flow one, a
+governance/drift-remediation flow, and (if `ENABLE_CLOUDWAN`) the
+multi-region Cloud WAN layer.
+
+**Security + Governance** -- confirm the recording plane is actually
+recording:
+```bash
+aws cloudtrail get-trail-status --name lattice-lab-trail --profile deloitte
+aws configservice describe-configuration-recorder-status --profile deloitte
+aws securityhub get-enabled-standards --profile deloitte
+```
+To test the drift-remediation flow end to end, manually create something
+throwaway outside the pipeline (e.g. `aws ec2 create-security-group
+--group-name manual-test --description test --vpc-id <AppVpcId> --profile
+deloitte`) and confirm two emails arrive at `REMEDIATION_EMAIL` (detection,
+then remediation result) and the security group is gone (or, with
+`DRY_RUN=true`, that it's still there and the email says so).
+
+**Multi-Region Cloud WAN** (only if `ENABLE_CLOUDWAN=true`) -- from
+`Region2Stack`'s `TestInstanceId` (SSM session, no NAT needed):
+```bash
+aws ssm start-session --target <TestInstanceId> --region us-east-2 --profile deloitte
+# reachable -- both attachments are in Workload, shared with nothing:
+nc -vz <AppVpcPrivateIp> 8080   # should FAIL -- Workload is isolated
+# now attach a resource into SkyTransit/FastTrack instead and re-test to see it succeed
+```
 
 ## Teardown
 
@@ -158,6 +268,16 @@ After it completes:
   (charges per-hour even mid-teardown), Elastic IPs (charged if unattached --
   confirm the libreswan/NAT-instance EIPs actually released), Secrets Manager
   (30-day pending-deletion window still bills), CloudWatch Logs storage.
+- If `ENABLE_CLOUDWAN` was ever `true`: this is the layer most worth
+  destroying promptly rather than leaving running (see its cost warning
+  above). `cdk destroy --all` tears down `Region2Stack` (us-east-2) and
+  `CloudWanStack` (us-east-1) along with everything else; if a destroy ever
+  fails partway through on the TGW peering/attachment resources
+  specifically, delete the `CfnTransitGatewayRouteTableAttachment` first,
+  then the peering, then retry -- Cloud WAN won't delete a peering that
+  still has an active route table attachment.
+- `SecurityStack`'s 5 CMKs go to `PendingDeletion` (7-day AWS-enforced
+  minimum), not deleted immediately -- expected, not a stuck resource.
 
 ## Known gaps (stated plainly, not fixed here)
 

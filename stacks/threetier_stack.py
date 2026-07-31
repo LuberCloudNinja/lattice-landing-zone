@@ -37,6 +37,7 @@ from constructs import Construct
 
 import config
 from stacks.network_stack import NetworkStack
+from stacks.security_stack import SecurityStack
 
 APP_DIR = Path(__file__).parent.parent / "app"
 APP_TIER_PORT = 8080  # must match app/backend/app.py's PORT env default
@@ -45,7 +46,7 @@ APP_TIER_PORT = 8080  # must match app/backend/app.py's PORT env default
 class ThreeTierStack(Stack):
     """Classic three-tier separation: web can't touch the DB, only the app tier can."""
 
-    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, security: SecurityStack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.THREETIER)
 
@@ -156,12 +157,18 @@ class ThreeTierStack(Stack):
             cpu=256,
             memory_limit_mib=512,
         )
+        app_log_group = logs.LogGroup(
+            self, "AppLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
         app_task_definition.add_container(
             "AppContainer",
             image=ecs.ContainerImage.from_asset(str(APP_DIR / "backend")),
             port_mappings=[ecs.PortMapping(container_port=APP_TIER_PORT)],
             environment={"PORT": str(APP_TIER_PORT)},
-            logging=ecs.LogDrivers.aws_logs(stream_prefix="app-tier", log_retention=logs.RetentionDays.ONE_WEEK),
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="app-tier", log_group=app_log_group),
         )
 
         self.app_service = ecs.FargateService(
@@ -209,6 +216,7 @@ class ThreeTierStack(Stack):
         lattice_target_role = iam.Role(
             self, "LatticeInstanceTargetRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
         lattice_target_user_data = ec2.UserData.for_linux()
@@ -245,7 +253,7 @@ class ThreeTierStack(Stack):
             user_data=lattice_target_user_data,
             ssm_session_permissions=True,
             block_devices=[ec2.BlockDevice(
-                device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True)
+                device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True, kms_key=security.ebs_key)
             )],
         )
 
@@ -292,9 +300,14 @@ class ThreeTierStack(Stack):
         # ------------------------------------------------------------------
         web_bucket = s3.Bucket(
             self, "WebBucket",
+            versioned=True,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            encryption=s3.BucketEncryption.S3_MANAGED,
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=security.buckets_key,
+            bucket_key_enabled=True,
             enforce_ssl=True,
+            server_access_logs_bucket=security.s3_access_logs_bucket,
+            server_access_logs_prefix="web-bucket/",
             removal_policy=cdk.RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )

@@ -36,6 +36,7 @@ from constructs import Construct
 
 import config
 from stacks.network_stack import NetworkStack
+from stacks.security_stack import SecurityStack
 
 ASSETS_DIR = Path(__file__).parent / "assets" / "inspection"
 
@@ -56,7 +57,7 @@ S3_POLICY_PREFIX = "policy"
 class InspectionStack(Stack):
     """GWLB target group (GENEVE/6081) fronting 2 firewall appliances per AZ, HA."""
 
-    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, security: SecurityStack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.INSPECTION)
 
@@ -77,8 +78,12 @@ class InspectionStack(Stack):
             self, "PolicyBucket",
             versioned=True,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            encryption=s3.BucketEncryption.S3_MANAGED,
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=security.buckets_key,
+            bucket_key_enabled=True,
             enforce_ssl=True,
+            server_access_logs_bucket=security.s3_access_logs_bucket,
+            server_access_logs_prefix="policy-bucket/",
             removal_policy=cdk.RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
@@ -140,6 +145,7 @@ class InspectionStack(Stack):
         firewall_role = iam.Role(
             self, "FirewallRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore"),
                 iam.ManagedPolicy.from_aws_managed_policy_name("CloudWatchAgentServerPolicy"),
@@ -233,7 +239,7 @@ class InspectionStack(Stack):
             # headers + CMake + compiler) and Suricata's ET Open ruleset both
             # need real room. Encrypted per cdk-nag AwsSolutions-EC26.
             block_devices=[ec2.BlockDevice(
-                device_name="/dev/sda1", volume=ec2.BlockDeviceVolume.ebs(20, encrypted=True)
+                device_name="/dev/sda1", volume=ec2.BlockDeviceVolume.ebs(20, encrypted=True, kms_key=security.ebs_key)
             )],
         )
 

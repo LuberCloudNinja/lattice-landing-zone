@@ -420,6 +420,131 @@ def build_svg() -> str:
 </svg>'''
 
 
+def build_governance_svg() -> str:
+    """Second, independent diagram: the recording/detection plane +
+    EventBridge -> Lambda -> SNS auto-remediation flow (governance_stack.py
+    / drift_remediation_stack.py). Deliberately its own small SVG, not
+    grafted onto build_svg()'s inspection-flow canvas above -- that one is
+    governed by docs/inspection-architecture-reference.md Section 6's exact
+    grid/assertion spec for a single, narrow purpose (the GWLB/firewall/TGW
+    traffic path); this is a different concern entirely."""
+    w, h = 1600, 360
+    services, flows, boundaries = [], [], []
+
+    trail_x, trail_y = 40, 148
+    services.append(service_box(trail_x, trail_y, 160, 64, "CloudTrail", icon_eye))
+
+    detect_x = 280
+    detect_labels = [("AWS Config", 40), ("Security Hub", 148), ("GuardDuty", 256)]
+    for label, dy in detect_labels:
+        services.append(service_box(detect_x, dy, 160, 64, label, icon_shield))
+        flows.append(orthogonal_path(
+            [(trail_x + 160, trail_y + 32), (detect_x - 24, trail_y + 32), (detect_x - 24, dy + 32), (detect_x, dy + 32)],
+            "north-south", bidirectional=False))
+
+    eb_x, eb_y = 560, 148
+    services.append(service_box(eb_x, eb_y, 160, 64, "EventBridge Rule", icon_gateway,
+                                 sub="mutating API call, NOT the pipeline role"))
+    flows.append(orthogonal_path([(trail_x + 160, trail_y + 32), (eb_x, eb_y + 32)], "north-south", bidirectional=False))
+
+    lambda_x, lambda_y = 840, 148
+    services.append(service_box(lambda_x, lambda_y, 200, 64, "drift-remediator", icon_server,
+                                 sub="tag-gated: ManagedBy=cdk skipped"))
+    flows.append(orthogonal_path([(eb_x + 160, eb_y + 32), (lambda_x, lambda_y + 32)], "north-south", bidirectional=False))
+
+    sns_x, sns_y = 1160, 148
+    services.append(service_box(sns_x, sns_y, 160, 64, "SNS: governance-alerts", icon_bucket))
+    flows.append(orthogonal_path([(lambda_x + 200, lambda_y + 32), (sns_x, sns_y + 32)], "north-south", bidirectional=False))
+
+    email_x, email_y = 1400, 148
+    services.append(service_box(email_x, email_y, 160, 64, "Email", icon_cloud, sub="config.REMEDIATION_EMAIL"))
+    flows.append(orthogonal_path([(sns_x + 160, sns_y + 32), (email_x, email_y + 32)], "north-south", bidirectional=False))
+
+    # Cross-cutting: permissions boundary + 5 CMKs, applied to every stack.
+    boundaries.append(boundary(40, 260, 1520, 72, "SecurityStack -- 5 CMKs (logs/buckets/ebs/secrets/sns) + permissions boundary, applied project-wide", small=True))
+
+    defs = "\n".join(
+        f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
+        for cls in ("north-south",)
+    )
+    return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="gov-diagram-title gov-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="gov-diagram-title">Governance and drift-remediation flow</title>
+  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout.</desc>
+  <defs>{defs}</defs>
+  <g id="gov-boundaries">{"".join(boundaries)}</g>
+  <g id="gov-services">{"".join(services)}</g>
+  <g id="gov-flows">{"".join(flows)}</g>
+</svg>'''
+
+
+def build_cloudwan_svg() -> str:
+    """Third, independent diagram: the multi-region Cloud WAN layer
+    (cloudwan_stack.py / region2_stack.py), gated behind ENABLE_CLOUDWAN."""
+    w, h = 1600, 520
+    boundaries, services, flows = [], [], []
+
+    boundaries.append(boundary(40, 40, 900, 440, "us-east-1 (home region)"))
+    boundaries.append(boundary(1000, 40, 560, 440, "us-east-2"))
+
+    core_x, core_y, core_w, core_h = 80, 88, 820, 120
+    boundaries.append(boundary(core_x, core_y, core_w, core_h, "Cloud WAN Core Network", small=True))
+    seg_names = ["FastTrack", "SkyPath", "SkyTransit", "Workload"]
+    seg_w, seg_gutter = 190, 16
+    seg_x0 = core_x + 20
+    seg_y = core_y + 48
+    seg_centers = {}
+    for i, name in enumerate(seg_names):
+        sx = seg_x0 + i * (seg_w + seg_gutter)
+        sub = "isolated" if name == "Workload" else None
+        services.append(service_box(sx, seg_y, seg_w, 56, name, icon_shield, sub=sub))
+        seg_centers[name] = (sx + seg_w // 2, seg_y + 56)
+
+    app_x, app_y = 120, 280
+    services.append(service_box(app_x, app_y, 200, 64, "app-vpc", icon_server, sub="segment=Workload"))
+    flows.append(orthogonal_path([seg_centers["Workload"], (app_x + 100, app_y)], "north-south", bidirectional=False))
+
+    provider_x, provider_y = 400, 280
+    services.append(service_box(provider_x, provider_y, 200, 64, "provider-vpc", icon_server, sub="segment=FastTrack"))
+    flows.append(orthogonal_path([seg_centers["FastTrack"], (provider_x + 100, provider_y)], "north-south", bidirectional=False))
+
+    tgw_x, tgw_y = 680, 280
+    services.append(service_box(tgw_x, tgw_y, 200, 64, "Existing TGW", icon_lb, sub="peered -> SkyTransit"))
+    flows.append(orthogonal_path([seg_centers["SkyTransit"], (tgw_x + 100, tgw_y)], "north-south", bidirectional=False))
+    flows.append(f'<text x="{tgw_x - 4}" y="{tgw_y + 100}" class="label-service-sub">TGW-peering migration path -- ' +
+                 'incremental, not rip-and-replace</text>')
+
+    share_y = seg_y + 56 + 24
+    share_x = (seg_centers["SkyTransit"][0] + seg_centers["FastTrack"][0]) // 2
+    flows.append(orthogonal_path(
+        [(seg_centers["SkyTransit"][0], share_y), (seg_centers["FastTrack"][0], share_y)], "east-west", dashed=True))
+    flows.append(f'<text x="{share_x - 60}" y="{share_y + 16}" class="flow-label">segment-actions: share SkyTransit -&gt; FastTrack</text>')
+
+    region2_x, region2_y = 1040, 280
+    services.append(service_box(region2_x, region2_y, 200, 64, "region2-prod-vpc", icon_server, sub="segment=Workload"))
+    ssm_x, ssm_y = 1320, 280
+    services.append(service_box(ssm_x, ssm_y, 160, 64, "SSM test instance", icon_server, sub="no NAT/IGW"))
+    flows.append(orthogonal_path([(region2_x + 200, region2_y + 32), (ssm_x, ssm_y + 32)], "east-west", bidirectional=False))
+
+    edge_y = core_y + core_h // 2
+    flows.append(orthogonal_path([(core_x + core_w, edge_y), (1000 + 40, edge_y)], "east-west"))
+    flows.append(orthogonal_path([(1000 + 40, edge_y), (region2_x + 100, region2_y)], "north-south", bidirectional=False))
+
+    defs = "\n".join(
+        f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
+        for cls in ("north-south", "east-west")
+    )
+    return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="wan-diagram-title wan-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="wan-diagram-title">Multi-region AWS Cloud WAN (ENABLE_CLOUDWAN)</title>
+  <desc id="wan-diagram-desc">A Cloud WAN core network spanning us-east-1 and us-east-2, with four segments -- FastTrack, SkyPath, SkyTransit, and Workload (isolated) -- app-vpc and provider-vpc attached in us-east-1, a second Workload VPC attached in us-east-2, and the existing Transit Gateway peered into the SkyTransit segment as an incremental migration path.</desc>
+  <defs>{defs}</defs>
+  <g id="wan-boundaries">{"".join(boundaries)}</g>
+  <g id="wan-services">{"".join(services)}</g>
+  <g id="wan-flows">{"".join(flows)}</g>
+</svg>'''
+
+
 CSS = """
 :root {
   --bg: #f7f8fa;
@@ -455,6 +580,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-se
 .page { max-width: 1400px; margin: 0 auto; padding: 0 24px 48px; }
 header { padding-top: 32px; }
 h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
+h2 { font-size: 18px; font-weight: 600; margin: 32px 0 4px; }
 .subtitle { font-size: 14px; font-weight: 400; color: var(--text-muted); margin: 0 0 20px; }
 nav.legend { list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-wrap: wrap; gap: 16px 24px; }
 nav.legend ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 16px 24px; }
@@ -515,6 +641,8 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 
 def build_html() -> str:
     svg = build_svg()
+    gov_svg = build_governance_svg()
+    wan_svg = build_cloudwan_svg()
     return f'''<!doctype html>
 <html lang="en">
 <head>
@@ -544,9 +672,25 @@ def build_html() -> str:
       {svg}
     </div>
   </figure>
+
+  <h2>Governance and Drift-Remediation</h2>
+  <p class="subtitle">security_stack.py &middot; governance_stack.py &middot; drift_remediation_stack.py</p>
+  <figure>
+    <div class="diagram-scroll">
+      {gov_svg}
+    </div>
+  </figure>
+
+  <h2>Multi-Region AWS Cloud WAN</h2>
+  <p class="subtitle">cloudwan_stack.py &middot; region2_stack.py &middot; gated behind ENABLE_CLOUDWAN (off by default -- see README.md's cost warning)</p>
+  <figure>
+    <div class="diagram-scroll">
+      {wan_svg}
+    </div>
+  </figure>
 </main>
 <footer>
-  The CloudFront/S3 panel (top right) shows how this page is delivered to your browser &mdash; it is not part of the depicted network.
+  The CloudFront/S3 panel (top right of the first diagram) shows how this page is delivered to your browser &mdash; it is not part of the depicted network.
 </footer>
 </div>
 </body>

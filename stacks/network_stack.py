@@ -31,6 +31,7 @@ from cdk_nag import NagPackSuppression, NagSuppressions
 from constructs import Construct
 
 import config
+from stacks.security_stack import SecurityStack
 
 
 def _generate_psk() -> str:
@@ -38,16 +39,17 @@ def _generate_psk() -> str:
     return "k" + secrets.token_hex(24)
 
 
-def _encrypted_root_volume(size_gb: int = 8) -> list:
-    """cdk-nag AwsSolutions-EC26 -- encrypt every instance's root EBS volume.
-    Free, no functional trade-off; there's no reason not to."""
-    return [ec2.BlockDevice(device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(size_gb, encrypted=True))]
+def _encrypted_root_volume(kms_key, size_gb: int = 8) -> list:
+    """cdk-nag AwsSolutions-EC26 -- encrypt every instance's root EBS volume
+    with security_stack.py's project-wide ebs CMK rather than the AWS-managed
+    default key."""
+    return [ec2.BlockDevice(device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(size_gb, encrypted=True, kms_key=kms_key))]
 
 
 class NetworkStack(Stack):
     """Four VPCs (onprem/inspection/app/provider), Transit Gateway, VPN, placeholder broker."""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, *, security: SecurityStack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.NETWORK)
 
@@ -342,6 +344,7 @@ class NetworkStack(Stack):
         inspection_nat_role = iam.Role(
             self, "InspectionNatRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
 
@@ -355,7 +358,7 @@ class NetworkStack(Stack):
             role=inspection_nat_role,
             source_dest_check=False,
             ssm_session_permissions=True,
-            block_devices=_encrypted_root_volume(),
+            block_devices=_encrypted_root_volume(security.ebs_key),
         )
         inspection_nat.user_data.add_commands(
             "set -e",
@@ -431,6 +434,7 @@ class NetworkStack(Stack):
         libreswan_role = iam.Role(
             self, "LibreswanRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
         # describe-vpn-connections/describe-customer-gateways have no
@@ -452,7 +456,7 @@ class NetworkStack(Stack):
             role=libreswan_role,
             source_dest_check=False,
             ssm_session_permissions=True,
-            block_devices=_encrypted_root_volume(),
+            block_devices=_encrypted_root_volume(security.ebs_key),
         )
 
         # This EIP's InstanceId makes it depend on libreswan (the instance
@@ -655,6 +659,7 @@ class NetworkStack(Stack):
         broker_role = iam.Role(
             self, "BrokerRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")],
         )
 
@@ -667,7 +672,7 @@ class NetworkStack(Stack):
             security_group=broker_sg,
             role=broker_role,
             ssm_session_permissions=True,
-            block_devices=_encrypted_root_volume(),
+            block_devices=_encrypted_root_volume(security.ebs_key),
         )
         self.broker.user_data.add_commands(
             "set -e",

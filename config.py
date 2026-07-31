@@ -61,6 +61,19 @@ ENABLE_KAFKA = os.environ.get("ENABLE_KAFKA", "false").lower() == "true"
 SECOND_ACCOUNT_ID = os.environ.get("SECOND_ACCOUNT_ID")  # None if not provided
 ENABLE_RAM_SHARE = bool(SECOND_ACCOUNT_ID)
 
+# Multi-region AWS Cloud WAN layer (cloudwan_stack.py / region2_stack.py).
+# Default off -- Cloud WAN's core network + attachments are materially more
+# expensive than the TGW already in use (per-attachment + per-GB data
+# processing charges in every attached edge location), so this is meant to
+# be flipped on for a demo, toured, then torn down, not left running.
+ENABLE_CLOUDWAN = os.environ.get("ENABLE_CLOUDWAN", "false").lower() == "true"
+SECOND_REGION = os.environ.get("SECOND_REGION", "us-east-2")
+
+# Governance / drift-remediation (governance_stack.py / drift_remediation_stack.py).
+REMEDIATION_EMAIL = os.environ.get("REMEDIATION_EMAIL", "luberguilarte@gmail.com")
+# True = the drift-remediator Lambda only alerts (SNS), never deletes.
+DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+
 # ---------------------------------------------------------------------------
 # VPC CIDR blocks (SPEC.md Section 4)
 # ---------------------------------------------------------------------------
@@ -70,6 +83,25 @@ VPC_CIDRS = {
     "app": "10.1.0.0/16",  # spoke: three-tier app
     "provider": "10.2.0.0/16",  # PrivateLink provider
 }
+
+# Second-region (SECOND_REGION) CIDRs -- deliberately non-overlapping with
+# VPC_CIDRS above so the two regions could, in principle, be connected
+# without a conflict (Cloud WAN doesn't NAT between segments).
+REGION2_VPC_CIDRS = {
+    "region2_prod": "10.20.0.0/16",
+    "region2_shared": "10.21.0.0/16",
+}
+
+# ---------------------------------------------------------------------------
+# AWS Cloud WAN segment names -- matching the customer's own vocabulary, used
+# verbatim in cloudwan_stack.py's core network policy document and as the
+# `segment` tag value attachments key off of (attachment-policies).
+# ---------------------------------------------------------------------------
+class CloudWanSegment:
+    FASTTRACK = "FastTrack"  # prod
+    SKYPATH = "SkyPath"  # proxy
+    SKYTRANSIT = "SkyTransit"  # hybrid (on-prem/TGW reachability)
+    WORKLOAD = "Workload"
 
 # ---------------------------------------------------------------------------
 # Instance sizing (lab-cost defaults per SPEC.md Section 1)
@@ -105,6 +137,12 @@ class Layer:
     KAFKA = "kafka"
     OBSERVABILITY = "observability"
     DIAGRAM = "diagram"
+    SECURITY = "security"
+    GOVERNANCE = "governance"
+    REMEDIATION = "remediation"
+    ORG = "org"
+    CLOUDWAN = "cloudwan"
+    REGION2 = "region2"
 
 
 ALL_LAYERS = [
@@ -116,4 +154,10 @@ ALL_LAYERS = [
     Layer.KAFKA,
     Layer.OBSERVABILITY,
     Layer.DIAGRAM,
+    Layer.SECURITY,
+    Layer.GOVERNANCE,
+    Layer.REMEDIATION,
+    Layer.ORG,
+    Layer.CLOUDWAN,
+    Layer.REGION2,
 ]

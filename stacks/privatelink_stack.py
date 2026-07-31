@@ -31,6 +31,7 @@ from constructs import Construct
 
 import config
 from stacks.network_stack import NetworkStack
+from stacks.security_stack import SecurityStack
 
 PROVIDER_PORT = 8080
 PROVIDER_ASSETS_DIR = Path(__file__).parent / "assets" / "privatelink"
@@ -39,7 +40,7 @@ PROVIDER_ASSETS_DIR = Path(__file__).parent / "assets" / "privatelink"
 class PrivateLinkStack(Stack):
     """Provider app behind an NLB, exposed as a VPC endpoint service; app-vpc consumes it."""
 
-    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, *, network: NetworkStack, security: SecurityStack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.PRIVATELINK)
 
@@ -123,12 +124,18 @@ class PrivateLinkStack(Stack):
             cpu=256,
             memory_limit_mib=512,
         )
+        provider_log_group = logs.LogGroup(
+            self, "ProviderLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
         provider_task_definition.add_container(
             "ProviderContainer",
             image=ecs.ContainerImage.from_asset(str(PROVIDER_ASSETS_DIR)),
             port_mappings=[ecs.PortMapping(container_port=PROVIDER_PORT)],
             environment={"PORT": str(PROVIDER_PORT)},
-            logging=ecs.LogDrivers.aws_logs(stream_prefix="provider", log_retention=logs.RetentionDays.ONE_WEEK),
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="provider", log_group=provider_log_group),
         )
 
         provider_service = ecs.FargateService(

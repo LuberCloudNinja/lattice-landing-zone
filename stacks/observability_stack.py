@@ -29,6 +29,7 @@ from constructs import Construct
 import config
 from stacks.inspection_stack import InspectionStack
 from stacks.lattice_stack import LatticeStack
+from stacks.security_stack import SecurityStack
 from stacks.threetier_stack import ThreeTierStack
 
 
@@ -43,7 +44,8 @@ class ObservabilityStack(Stack):
 
     def __init__(
         self, scope: Construct, construct_id: str, *,
-        inspection: InspectionStack, threetier: ThreeTierStack, lattice: LatticeStack, **kwargs
+        inspection: InspectionStack, threetier: ThreeTierStack, lattice: LatticeStack,
+        security: SecurityStack, **kwargs
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.OBSERVABILITY)
@@ -56,12 +58,14 @@ class ObservabilityStack(Stack):
             self, "SuricataEveLogGroup",
             log_group_name="/inspection-vpc/suricata-eve",
             retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
         nftables_log_group = logs.LogGroup(
             self, "NftablesPlLogGroup",
             log_group_name="/inspection-vpc/nft-pl",
             retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
 

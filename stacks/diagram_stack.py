@@ -25,6 +25,7 @@ from cdk_nag import NagPackSuppression, NagSuppressions
 from constructs import Construct
 
 import config
+from stacks.security_stack import SecurityStack
 
 DIAGRAM_SITE_DIR = Path(__file__).parent.parent / "diagram-site"
 
@@ -32,7 +33,7 @@ DIAGRAM_SITE_DIR = Path(__file__).parent.parent / "diagram-site"
 class DiagramStack(Stack):
     """Private S3 origin behind CloudFront (OAC) serving the hand-built architecture diagram."""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, *, security: SecurityStack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.DIAGRAM)
 
@@ -45,8 +46,12 @@ class DiagramStack(Stack):
             self, "DiagramBucket",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            encryption=s3.BucketEncryption.S3_MANAGED,
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=security.buckets_key,
+            bucket_key_enabled=True,
             enforce_ssl=True,
+            server_access_logs_bucket=security.s3_access_logs_bucket,
+            server_access_logs_prefix="diagram-bucket/",
             removal_policy=cdk.RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
