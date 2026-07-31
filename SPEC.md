@@ -11,7 +11,7 @@
 
 | Placeholder | Value |
 |---|---|
-| `<<AWS_ACCOUNT_ID>>` | `458798438816` |
+| `<<AWS_ACCOUNT_ID>>` | your 12-digit AWS account ID |
 | `<<REGION>>` | `us-east-1` |
 | `<<GITHUB_OWNER>>` | your GitHub username/org |
 | `<<GITHUB_REPO>>` | e.g. `lattice-landing-zone` |

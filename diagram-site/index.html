@@ -187,11 +187,11 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
   <p class="subtitle">security_stack.py &middot; governance_stack.py &middot; drift_remediation_stack.py</p>
   <figure>
     <div class="diagram-scroll">
-      <svg viewBox="0 0 1600 360" role="img" aria-labelledby="gov-diagram-title gov-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 1600 520" role="img" aria-labelledby="gov-diagram-title gov-diagram-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="gov-diagram-title">Governance and drift-remediation flow</title>
-  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout.</desc>
+  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout. A second, independent loop (auto_heal_stack.py) watches 3 named alarms -- VPN tunnel down, Lattice target unhealthy, Bedrock throttling -- and runs a Step Functions Notify-Remediate-Notify sequence against the one specific resource each alarm names, publishing to the same SNS topic before and after.</desc>
   <defs><marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker></defs>
-  <g id="gov-boundaries"><g class="stamp-boundary"><rect x="40" y="260" width="1520" height="72" rx="16" class="box-boundary-small"/><text x="50" y="280" class="label-boundary">SecurityStack -- 5 CMKs (logs/buckets/ebs/secrets/sns) + permissions boundary, applied project-wide</text></g></g>
+  <g id="gov-boundaries"><g class="stamp-boundary"><rect x="40" y="260" width="1520" height="72" rx="16" class="box-boundary-small"/><text x="50" y="280" class="label-boundary">SecurityStack -- 5 CMKs (logs/buckets/ebs/secrets/sns) + permissions boundary, applied project-wide</text></g><g class="stamp-boundary"><rect x="40" y="348" width="1520" height="148" rx="16" class="box-boundary-small"/><text x="50" y="368" class="label-boundary">auto_heal_stack.py -- deterministic remediation (3 known failure modes, never a sweep)</text></g></g>
   <g id="gov-services"><g class="stamp-service">
 <rect x="40" y="148" width="160" height="64" rx="6" class="box-service"/>
 <g transform="translate(109,163)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
@@ -227,8 +227,35 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 <g transform="translate(1468,162)" class="icon"><path d="M4 16a6 6 0 0 1 11.3-2.8A5 5 0 0 1 20 18H5a4 4 0 0 1-1-7.9z" fill="none" stroke="currentColor" stroke-width="1.5"/></g>
 <text x="1480" y="192" class="label-service-title" text-anchor="middle">Email</text>
 <text x="1480" y="202" class="label-service-sub" text-anchor="middle">config.REMEDIATION_EMAIL</text>
+</g><g class="stamp-service">
+<rect x="80" y="412" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(159,427)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="170" y="456" class="label-service-title" text-anchor="middle">VPN tunnel down</text>
+</g><g class="stamp-service">
+<rect x="276" y="412" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(355,427)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="366" y="456" class="label-service-title" text-anchor="middle">Lattice target unhealthy</text>
+</g><g class="stamp-service">
+<rect x="472" y="412" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(551,427)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="562" y="456" class="label-service-title" text-anchor="middle">Bedrock throttling</text>
+</g><g class="stamp-service">
+<rect x="692" y="412" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(782,424)" class="icon"><rect x="0" y="4" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="4" y1="0" x2="4" y2="4" stroke="currentColor" stroke-width="1.5"/><line x1="16" y1="0" x2="16" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="792" y="456" class="label-service-title" text-anchor="middle">Step Functions</text>
+<text x="792" y="458" class="label-service-sub" text-anchor="middle">Notify -&gt; Remediate -&gt; Notify</text>
+</g><g class="stamp-service">
+<rect x="932" y="412" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(1022,426)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="1032" y="456" class="label-service-title" text-anchor="middle">auto-heal-remediate</text>
+<text x="1032" y="458" class="label-service-sub" text-anchor="middle">1 named resource per type</text>
+</g><g class="stamp-service">
+<rect x="1172" y="412" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(1263,425)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="1272" y="456" class="label-service-title" text-anchor="middle">SNS: governance-alerts</text>
+<text x="1272" y="458" class="label-service-sub" text-anchor="middle">same topic as above -- before + after</text>
 </g></g>
-  <g id="gov-flows"><path d="M 200 180 L 256 180 L 256 72 L 280 72" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 256 180 L 256 180 L 280 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 256 180 L 256 288 L 280 288" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 560 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 720 180 L 840 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1040 180 L 1160 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1320 180 L 1400 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/></g>
+  <g id="gov-flows"><path d="M 200 180 L 256 180 L 256 72 L 280 72" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 256 180 L 256 180 L 280 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 256 180 L 256 288 L 280 288" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 200 180 L 560 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 720 180 L 840 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1040 180 L 1160 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1320 180 L 1400 180" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 260 440 L 692 440" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 456 440 L 692 440" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 652 440 L 692 440" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 892 440 L 932 440" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1132 440 L 1172 440" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/></g>
 </svg>
     </div>
   </figure>
@@ -287,6 +314,167 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 <text x="1400" y="334" class="label-service-sub" text-anchor="middle">no NAT/IGW</text>
 </g></g>
   <g id="wan-flows"><path d="M 813 192 L 220 280" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 195 192 L 500 280" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 607 192 L 780 280" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><text x="676" y="380" class="label-service-sub">Peering only -- route-table attachment into SkyTransit unresolved (AWS-side, see cloudwan_stack.py)</text><path d="M 607 216 L 195 216" class="flow flow-east-west" stroke-dasharray="6 4" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><text x="341" y="232" class="flow-label">segment-actions: share SkyTransit -&gt; FastTrack</text><path d="M 1240 312 L 1320 312" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 900 148 L 1040 148" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 1040 148 L 1140 280" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/></g>
+</svg>
+    </div>
+  </figure>
+
+  <h2>Agentic AI Layer</h2>
+  <p class="subtitle">agentic_ai_stack.py &middot; gated behind ENABLE_AI (off by default -- see README.md's cost warning)</p>
+  <figure>
+    <div class="diagram-scroll">
+      <svg viewBox="0 0 1600 760" role="img" aria-labelledby="ai-diagram-title ai-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="ai-diagram-title">Agentic AI layer (ENABLE_AI)</title>
+  <desc id="ai-diagram-desc">A Cognito-authenticated API Gateway fronts two agent-orchestrator Lambda personas (network-operator, read-only; connectivity-planner, adds propose_connectivity) sharing three-tier memory (DynamoDB working, S3 durable, S3-Vectors-backed Knowledge Base semantic) and 7 MCP tool Lambdas, which are also registered as real Bedrock AgentCore Gateway MCP targets alongside a Memory, Runtime x2, and Workload Identity resource. The tool Lambdas read from Lattice, governance, network-health, and (when those layers are enabled) Cloud WAN and SageMaker resources, and the one tool with any write capability opens a CodeCommit pull request rather than ever mutating infrastructure directly.</desc>
+  <defs><marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker>
+<marker id="marker-arrow-east-west" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-east-west"/></marker></defs>
+  <g id="ai-boundaries"><g class="stamp-boundary"><rect x="40" y="128" width="1520" height="288" rx="16" class="box-boundary"/><text x="50" y="148" class="label-boundary">app-vpc (Private subnets)</text></g><g class="stamp-boundary"><rect x="40" y="456" width="900" height="120" rx="16" class="box-boundary"/><text x="50" y="476" class="label-boundary">Bedrock AgentCore</text></g></g>
+  <g id="ai-services"><g class="stamp-service">
+<rect x="80" y="40" width="160" height="56" rx="6" class="box-service"/>
+<g transform="translate(151,52)" class="icon"><path d="M9 0 L18 3.5 V10 C18 15 14 18.5 9 20 C4 18.5 0 15 0 10 V3.5 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="160" y="84" class="label-service-title" text-anchor="middle">Cognito User Pool</text>
+<text x="160" y="86" class="label-service-sub" text-anchor="middle">JWT authorizer</text>
+</g><g class="stamp-service">
+<rect x="320" y="40" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(410,52)" class="icon"><rect x="0" y="4" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="4" y1="0" x2="4" y2="4" stroke="currentColor" stroke-width="1.5"/><line x1="16" y1="0" x2="16" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="420" y="84" class="label-service-title" text-anchor="middle">API Gateway (HTTP)</text>
+</g><g class="stamp-service">
+<rect x="120" y="168" width="280" height="64" rx="6" class="box-service"/>
+<g transform="translate(250,180)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="260" y="212" class="label-service-title" text-anchor="middle">agent-orchestrator (network-operator)</text>
+<text x="260" y="222" class="label-service-sub" text-anchor="middle">read-only tools only</text>
+</g><g class="stamp-service">
+<rect x="440" y="168" width="280" height="64" rx="6" class="box-service"/>
+<g transform="translate(570,180)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="580" y="212" class="label-service-title" text-anchor="middle">agent-orchestrator (connectivity-planner)</text>
+<text x="580" y="222" class="label-service-sub" text-anchor="middle">+ propose_connectivity</text>
+</g><g class="stamp-service">
+<rect x="120" y="272" width="280" height="64" rx="6" class="box-service"/>
+<g transform="translate(251,285)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="260" y="316" class="label-service-title" text-anchor="middle">DynamoDB (working)</text>
+<text x="260" y="326" class="label-service-sub" text-anchor="middle">TTL + PITR + CMK</text>
+</g><g class="stamp-service">
+<rect x="440" y="272" width="280" height="64" rx="6" class="box-service"/>
+<g transform="translate(571,285)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="580" y="316" class="label-service-title" text-anchor="middle">S3 (durable)</text>
+<text x="580" y="326" class="label-service-sub" text-anchor="middle">append-only JSONL, versioned</text>
+</g><g class="stamp-service">
+<rect x="760" y="272" width="340" height="64" rx="6" class="box-service"/>
+<g transform="translate(921,285)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="930" y="316" class="label-service-title" text-anchor="middle">S3 Vectors + Knowledge Base (semantic)</text>
+<text x="930" y="326" class="label-service-sub" text-anchor="middle">Titan Embed v2, 1024-dim</text>
+</g><g class="stamp-service">
+<rect x="1160" y="168" width="360" height="168" rx="6" class="box-service"/>
+<g transform="translate(1330,182)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="1340" y="212" class="label-service-title" text-anchor="middle">MCP tool Lambdas (x7)</text>
+<text x="1340" y="326" class="label-service-sub" text-anchor="middle">query_kafka, search_memory, get_network_health,
+query_governance, cloudwan_topology,
+detect_anomalies, propose_connectivity</text>
+</g><g class="stamp-service">
+<rect x="80" y="500" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(160,512)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="170" y="544" class="label-service-title" text-anchor="middle">Gateway (MCP)</text>
+</g><g class="stamp-service">
+<rect x="300" y="500" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(380,512)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="390" y="544" class="label-service-title" text-anchor="middle">Memory</text>
+</g><g class="stamp-service">
+<rect x="520" y="500" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(600,512)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="610" y="544" class="label-service-title" text-anchor="middle">Runtime x2</text>
+</g><g class="stamp-service">
+<rect x="740" y="500" width="180" height="56" rx="6" class="box-service"/>
+<g transform="translate(820,512)" class="icon"><rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/></g>
+<text x="830" y="544" class="label-service-title" text-anchor="middle">Workload Identity</text>
+</g><g class="stamp-service">
+<rect x="1060" y="456" width="340" height="32" rx="6" class="box-service"/>
+
+<text x="1230" y="476" class="label-service-title" text-anchor="middle">Lattice resource gateway</text>
+</g><g class="stamp-service">
+<rect x="1060" y="496" width="340" height="32" rx="6" class="box-service"/>
+
+<text x="1230" y="516" class="label-service-title" text-anchor="middle">Security Hub / Config</text>
+</g><g class="stamp-service">
+<rect x="1060" y="536" width="340" height="32" rx="6" class="box-service"/>
+
+<text x="1230" y="556" class="label-service-title" text-anchor="middle">ALB target health / VPN</text>
+</g><g class="stamp-service">
+<rect x="1060" y="576" width="340" height="32" rx="6" class="box-service-dim"/>
+
+<text x="1230" y="596" class="label-service-title" text-anchor="middle">Cloud WAN core network</text>
+</g><g class="stamp-service">
+<rect x="1060" y="616" width="340" height="32" rx="6" class="box-service-dim"/>
+
+<text x="1230" y="636" class="label-service-title" text-anchor="middle">SageMaker anomaly table</text>
+</g><g class="stamp-service">
+<rect x="1060" y="656" width="340" height="56" rx="6" class="box-service"/>
+<g transform="translate(1221,669)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="1230" y="700" class="label-service-title" text-anchor="middle">CodeCommit (open a PR)</text>
+<text x="1230" y="702" class="label-service-sub" text-anchor="middle">propose_connectivity -- never a direct mutation</text>
+</g></g>
+  <g id="ai-flows"><path d="M 240 68 L 320 68" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 420 96 L 260 168" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 420 96 L 580 168" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 260 232 L 260 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 580 232 L 260 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 260 232 L 580 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 580 232 L 580 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 260 232 L 930 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 580 232 L 930 272" class="flow flow-north-south" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><path d="M 260 232 L 1160 200" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 580 232 L 1160 200" class="flow flow-east-west" marker-start="url(#marker-arrow-east-west)" marker-end="url(#marker-arrow-east-west)"/><path d="M 1340 336 L 170 500" class="flow flow-north-south" stroke-dasharray="6 4" marker-start="url(#marker-arrow-north-south)" marker-end="url(#marker-arrow-north-south)"/><text x="60" y="448" class="flow-label">same Lambdas registered as real MCP Gateway targets</text><path d="M 1520 188 L 1060 472" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1520 188 L 1060 512" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1520 188 L 1060 552" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1520 188 L 1060 592" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><path d="M 1520 188 L 1060 632" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><path d="M 1520 188 L 1060 684" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/></g>
+</svg>
+    </div>
+  </figure>
+
+  <h2>SageMaker Anomaly Detection</h2>
+  <p class="subtitle">sagemaker_stack.py &middot; gated behind ENABLE_SAGEMAKER (off by default -- see README.md's cost warning)</p>
+  <figure>
+    <div class="diagram-scroll">
+      <svg viewBox="0 0 1600 360" role="img" aria-labelledby="sm-diagram-title sm-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="sm-diagram-title">SageMaker anomaly-detection layer (ENABLE_SAGEMAKER)</title>
+  <desc id="sm-diagram-desc">VPC Flow Logs land in S3 and get preprocessed into numeric-feature CSV daily; a weekly training job produces a new Random Cut Forest model generation, which a promoter Lambda swaps onto a scale-to-zero Async Inference endpoint; a separate 6-hourly batch-transform job scores accumulated data in bulk with whichever model is currently promoted, and a findings processor turns qualifying anomaly scores into DynamoDB + S3 + SNS output that agentic_ai_stack.py's detect_anomalies MCP tool reads. Because training/transform jobs aren't CloudFormation resources, a teardown custom resource sweeps every runtime-created endpoint/model/config on `cdk destroy`.</desc>
+  <defs><marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker>
+<marker id="marker-arrow-east-west" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-east-west"/></marker></defs>
+  <g id="sm-services"><g class="stamp-service">
+<rect x="40" y="40" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(129,55)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
+<text x="140" y="84" class="label-service-title" text-anchor="middle">app-vpc Flow Logs</text>
+</g><g class="stamp-service">
+<rect x="320" y="40" width="220" height="56" rx="6" class="box-service"/>
+<g transform="translate(421,53)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="430" y="84" class="label-service-title" text-anchor="middle">S3: raw/ -&gt; processed/</text>
+</g><g class="stamp-service">
+<rect x="620" y="40" width="220" height="56" rx="6" class="box-service"/>
+<g transform="translate(720,54)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="730" y="84" class="label-service-title" text-anchor="middle">flow-log-preprocessor</text>
+<text x="730" y="86" class="label-service-sub" text-anchor="middle">daily -- numeric features -&gt; CSV</text>
+</g><g class="stamp-service">
+<rect x="620" y="152" width="220" height="56" rx="6" class="box-service"/>
+<g transform="translate(720,166)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="730" y="196" class="label-service-title" text-anchor="middle">rcf-trainer</text>
+<text x="730" y="198" class="label-service-sub" text-anchor="middle">weekly -- CreateTrainingJob (RCF)</text>
+</g><g class="stamp-service">
+<rect x="900" y="152" width="240" height="56" rx="6" class="box-service"/>
+<g transform="translate(1010,166)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="1020" y="196" class="label-service-title" text-anchor="middle">rcf-model-promoter</text>
+<text x="1020" y="198" class="label-service-sub" text-anchor="middle">on training completion</text>
+</g><g class="stamp-service">
+<rect x="1220" y="152" width="240" height="56" rx="6" class="box-service"/>
+<g transform="translate(1329,165)" class="icon"><circle cx="11" cy="3" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="19" cy="15" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="3" y2="12.7" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="5.5" x2="19" y2="12.7" stroke="currentColor" stroke-width="1.3"/></g>
+<text x="1340" y="196" class="label-service-title" text-anchor="middle">Async Inference Endpoint</text>
+<text x="1340" y="198" class="label-service-sub" text-anchor="middle">scale-to-zero autoscaling</text>
+</g><g class="stamp-service">
+<rect x="900" y="264" width="240" height="56" rx="6" class="box-service"/>
+<g transform="translate(1010,278)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="1020" y="308" class="label-service-title" text-anchor="middle">rcf-batch-scorer</text>
+<text x="1020" y="310" class="label-service-sub" text-anchor="middle">every 6h -- CreateTransformJob</text>
+</g><g class="stamp-service">
+<rect x="1220" y="264" width="240" height="56" rx="6" class="box-service"/>
+<g transform="translate(1330,278)" class="icon"><rect x="0" y="0" width="20" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="5.5" x2="20" y2="5.5" stroke="currentColor" stroke-width="1"/><line x1="0" y1="11" x2="20" y2="11" stroke="currentColor" stroke-width="1"/></g>
+<text x="1340" y="308" class="label-service-title" text-anchor="middle">rcf-findings-processor</text>
+<text x="1340" y="310" class="label-service-sub" text-anchor="middle">on transform completion</text>
+</g><g class="stamp-service">
+<rect x="40" y="128" width="200" height="56" rx="6" class="box-service"/>
+<g transform="translate(131,141)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="140" y="172" class="label-service-title" text-anchor="middle">DynamoDB findings</text>
+<text x="140" y="174" class="label-service-sub" text-anchor="middle">read by detect_anomalies</text>
+</g><g class="stamp-service">
+<rect x="40" y="200" width="200" height="48" rx="6" class="box-service"/>
+<g transform="translate(131,213)" class="icon"><path d="M0 4 L18 4 L15 18 L3 18 Z" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="0" y1="4" x2="18" y2="4" stroke="currentColor" stroke-width="1.5"/></g>
+<text x="140" y="244" class="label-service-title" text-anchor="middle">SNS + S3</text>
+</g></g>
+  <g id="sm-boundaries"><g class="stamp-boundary"><rect x="40" y="272" width="220" height="72" rx="16" class="box-boundary-small"/><text x="50" y="292" class="label-boundary">teardown_cleanup (on cdk destroy only)</text></g></g>
+  <g id="sm-flows"><path d="M 240 68 L 320 68" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 540 68 L 620 68" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 730 96 L 730 152" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 840 180 L 900 180" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><text x="844" y="146" class="flow-label">EventBridge: Training Job State Change</text><path d="M 1140 180 L 1220 180" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1020 208 L 1020 264" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><text x="896" y="258" class="label-service-sub">uses the currently-promoted model</text><path d="M 1140 292 L 1220 292" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><path d="M 1340 320 L 1340 224 L 240 224" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/></g>
 </svg>
     </div>
   </figure>

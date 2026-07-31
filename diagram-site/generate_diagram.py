@@ -159,6 +159,18 @@ def icon_eye(cx: int, cy: int) -> str:
             f'</g>')
 
 
+def icon_bot(cx: int, cy: int) -> str:
+    """Agent/AI node marker -- a simple robot-head glyph, same minimalist
+    line-art style as the other icons above."""
+    return (f'<g transform="translate({cx-10},{cy-10})" class="icon">'
+            f'<rect x="2" y="4" width="16" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+            f'<line x1="10" y1="0" x2="10" y2="4" stroke="currentColor" stroke-width="1.5"/>'
+            f'<circle cx="10" cy="1" r="1.4" fill="currentColor" stroke="none"/>'
+            f'<circle cx="6.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/>'
+            f'<circle cx="13.5" cy="10.5" r="1.6" fill="currentColor" stroke="none"/>'
+            f'</g>')
+
+
 def service_box(x, y, w, h, title, icon_fn=None, sub=None, dim=False) -> str:
     icon_svg = icon_fn(x + w // 2, y + 22) if icon_fn else ""
     title_y = y + (h - 12 if icon_fn else h // 2) if not sub else y + h - 26
@@ -428,7 +440,7 @@ def build_governance_svg() -> str:
     governed by docs/inspection-architecture-reference.md Section 6's exact
     grid/assertion spec for a single, narrow purpose (the GWLB/firewall/TGW
     traffic path); this is a different concern entirely."""
-    w, h = 1600, 360
+    w, h = 1600, 520
     services, flows, boundaries = [], [], []
 
     trail_x, trail_y = 40, 148
@@ -463,6 +475,35 @@ def build_governance_svg() -> str:
     # Cross-cutting: permissions boundary + 5 CMKs, applied to every stack.
     boundaries.append(boundary(40, 260, 1520, 72, "SecurityStack -- 5 CMKs (logs/buckets/ebs/secrets/sns) + permissions boundary, applied project-wide", small=True))
 
+    # ------------------------------------------------------------------
+    # Auto-heal loop (auto_heal_stack.py) -- a second, independent
+    # EventBridge -> Step Functions -> Lambda -> SNS flow, deterministic
+    # remediation for 3 known failure modes rather than drift detection.
+    # ------------------------------------------------------------------
+    heal_y = 372
+    boundaries.append(boundary(40, heal_y - 24, 1520, 148, "auto_heal_stack.py -- deterministic remediation (3 known failure modes, never a sweep)", small=True))
+
+    alarm_x, alarm_w, alarm_gutter = 80, 180, 16
+    alarm_labels = ["VPN tunnel down", "Lattice target unhealthy", "Bedrock throttling"]
+    sfn_y = heal_y + 40
+    for i, label in enumerate(alarm_labels):
+        ax = alarm_x + i * (alarm_w + alarm_gutter)
+        services.append(service_box(ax, sfn_y, alarm_w, 56, label, icon_eye))
+
+    sfn_x = alarm_x + len(alarm_labels) * (alarm_w + alarm_gutter) + 24
+    services.append(service_box(sfn_x, sfn_y, 200, 56, "Step Functions", icon_gateway, sub="Notify -> Remediate -> Notify"))
+    for i in range(len(alarm_labels)):
+        ax = alarm_x + i * (alarm_w + alarm_gutter)
+        flows.append(orthogonal_path([(ax + alarm_w, sfn_y + 28), (sfn_x, sfn_y + 28)], "north-south", bidirectional=False))
+
+    remediate_x = sfn_x + 240
+    services.append(service_box(remediate_x, sfn_y, 200, 56, "auto-heal-remediate", icon_server, sub="1 named resource per type"))
+    flows.append(orthogonal_path([(sfn_x + 200, sfn_y + 28), (remediate_x, sfn_y + 28)], "north-south", bidirectional=False))
+
+    heal_sns_x = remediate_x + 240
+    services.append(service_box(heal_sns_x, sfn_y, 200, 56, "SNS: governance-alerts", icon_bucket, sub="same topic as above -- before + after"))
+    flows.append(orthogonal_path([(remediate_x + 200, sfn_y + 28), (heal_sns_x, sfn_y + 28)], "north-south", bidirectional=False))
+
     defs = "\n".join(
         f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
         f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
@@ -470,7 +511,7 @@ def build_governance_svg() -> str:
     )
     return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="gov-diagram-title gov-diagram-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="gov-diagram-title">Governance and drift-remediation flow</title>
-  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout.</desc>
+  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout. A second, independent loop (auto_heal_stack.py) watches 3 named alarms -- VPN tunnel down, Lattice target unhealthy, Bedrock throttling -- and runs a Step Functions Notify-Remediate-Notify sequence against the one specific resource each alarm names, publishing to the same SNS topic before and after.</desc>
   <defs>{defs}</defs>
   <g id="gov-boundaries">{"".join(boundaries)}</g>
   <g id="gov-services">{"".join(services)}</g>
@@ -542,6 +583,152 @@ def build_cloudwan_svg() -> str:
   <g id="wan-boundaries">{"".join(boundaries)}</g>
   <g id="wan-services">{"".join(services)}</g>
   <g id="wan-flows">{"".join(flows)}</g>
+</svg>'''
+
+
+def build_agentic_ai_svg() -> str:
+    """Fourth, independent diagram: the Agentic AI layer (agentic_ai_stack.py),
+    gated behind ENABLE_AI. Two personas sharing one Lambda code asset + tool
+    surface but distinct IAM roles, three-tier memory, Bedrock AgentCore
+    primitives (Runtime/Gateway-MCP/Memory/Identity), and the MCP tool
+    Lambdas' external targets -- shown at the same abstraction level as
+    build_cloudwan_svg() above (representative nodes, not every resource)."""
+    w, h = 1600, 760
+    boundaries, services, flows = [], [], []
+
+    cognito_x, cognito_y = 80, 40
+    services.append(service_box(cognito_x, cognito_y, 160, 56, "Cognito User Pool", icon_shield, sub="JWT authorizer"))
+    api_x, api_y = 320, 40
+    services.append(service_box(api_x, api_y, 200, 56, "API Gateway (HTTP)", icon_gateway))
+    flows.append(orthogonal_path([(cognito_x + 160, cognito_y + 28), (api_x, api_y + 28)], "north-south", bidirectional=False))
+
+    vpc_x, vpc_y, vpc_w, vpc_h = 40, 128, 1520, 288
+    boundaries.append(boundary(vpc_x, vpc_y, vpc_w, vpc_h, "app-vpc (Private subnets)"))
+
+    persona_y = vpc_y + 40
+    persona_defs = [("network-operator", 80, "read-only tools only"), ("connectivity-planner", 400, "+ propose_connectivity")]
+    persona_centers = {}
+    for name, dx, sub in persona_defs:
+        px = vpc_x + dx
+        services.append(service_box(px, persona_y, 280, 64, f"agent-orchestrator ({name})", icon_bot, sub=sub))
+        persona_centers[name] = (px + 140, persona_y + 64)
+        flows.append(orthogonal_path([(api_x + 100, api_y + 56), (px + 140, persona_y)], "north-south", bidirectional=False))
+
+    mem_y = persona_y + 104
+    mem_defs = [("DynamoDB (working)", 80, "TTL + PITR + CMK"), ("S3 (durable)", 400, "append-only JSONL, versioned"), ("S3 Vectors + Knowledge Base (semantic)", 720, "Titan Embed v2, 1024-dim")]
+    for label, dx, sub in mem_defs:
+        mx = vpc_x + dx
+        mw = 280 if dx < 700 else 340
+        services.append(service_box(mx, mem_y, mw, 64, label, icon_bucket, sub=sub))
+        for name in persona_centers:
+            flows.append(orthogonal_path([persona_centers[name], (mx + mw // 2, mem_y)], "north-south", bidirectional=True))
+
+    tools_x, tools_y = vpc_x + 1120, persona_y
+    services.append(service_box(tools_x, tools_y, 360, mem_y + 64 - persona_y, "MCP tool Lambdas (x7)", icon_server,
+                                 sub="query_kafka, search_memory, get_network_health,\nquery_governance, cloudwan_topology,\ndetect_anomalies, propose_connectivity"))
+    for name in persona_centers:
+        flows.append(orthogonal_path([persona_centers[name], (tools_x, persona_y + 32)], "east-west", bidirectional=True))
+
+    agentcore_y = vpc_y + vpc_h + 40
+    boundaries.append(boundary(vpc_x, agentcore_y, 900, 120, "Bedrock AgentCore"))
+    ac_defs = [("Gateway (MCP)", 40), ("Memory", 260), ("Runtime x2", 480), ("Workload Identity", 700)]
+    for label, dx in ac_defs:
+        acx = vpc_x + dx
+        services.append(service_box(acx, agentcore_y + 44, 180, 56, label, icon_bot))
+    flows.append(orthogonal_path([(tools_x + 180, tools_y + (mem_y + 64 - persona_y)), (vpc_x + 130, agentcore_y + 44)], "north-south", dashed=True, bidirectional=True))
+    flows.append(f'<text x="{vpc_x + 20}" y="{agentcore_y - 8}" class="flow-label">same Lambdas registered as real MCP Gateway targets</text>')
+
+    ext_x = vpc_x + 1020
+    ext_defs = [
+        ("Lattice resource gateway", agentcore_y, False),
+        ("Security Hub / Config", agentcore_y + 40, False),
+        ("ALB target health / VPN", agentcore_y + 80, False),
+        ("Cloud WAN core network", agentcore_y + 120, True),
+        ("SageMaker anomaly table", agentcore_y + 160, True),
+    ]
+    for label, ey, conditional in ext_defs:
+        services.append(service_box(ext_x, ey, 340, 32, label, None, dim=conditional))
+        flows.append(orthogonal_path([(tools_x + 360, tools_y + 20), (ext_x, ey + 16)], "east-west", dashed=conditional, bidirectional=False))
+
+    cc_x, cc_y = ext_x, agentcore_y + 200
+    services.append(service_box(cc_x, cc_y, 340, 56, "CodeCommit (open a PR)", icon_bucket, sub="propose_connectivity -- never a direct mutation"))
+    flows.append(orthogonal_path([(tools_x + 360, tools_y + 20), (cc_x, cc_y + 28)], "east-west", bidirectional=False))
+
+    defs = "\n".join(
+        f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
+        for cls in ("north-south", "east-west")
+    )
+    return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="ai-diagram-title ai-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="ai-diagram-title">Agentic AI layer (ENABLE_AI)</title>
+  <desc id="ai-diagram-desc">A Cognito-authenticated API Gateway fronts two agent-orchestrator Lambda personas (network-operator, read-only; connectivity-planner, adds propose_connectivity) sharing three-tier memory (DynamoDB working, S3 durable, S3-Vectors-backed Knowledge Base semantic) and 7 MCP tool Lambdas, which are also registered as real Bedrock AgentCore Gateway MCP targets alongside a Memory, Runtime x2, and Workload Identity resource. The tool Lambdas read from Lattice, governance, network-health, and (when those layers are enabled) Cloud WAN and SageMaker resources, and the one tool with any write capability opens a CodeCommit pull request rather than ever mutating infrastructure directly.</desc>
+  <defs>{defs}</defs>
+  <g id="ai-boundaries">{"".join(boundaries)}</g>
+  <g id="ai-services">{"".join(services)}</g>
+  <g id="ai-flows">{"".join(flows)}</g>
+</svg>'''
+
+
+def build_sagemaker_svg() -> str:
+    """Fifth, independent diagram: the SageMaker anomaly-detection layer
+    (sagemaker_stack.py), gated behind ENABLE_SAGEMAKER. All 5 pipeline
+    Lambdas are boto3/API-driven (there is no CloudFormation resource type
+    for a training or transform job) -- see that stack's module docstring."""
+    w, h = 1600, 360
+    services, flows, boundaries = [], [], []
+
+    vpc_x, vpc_y = 40, 128
+    services.append(service_box(vpc_x, 40, 200, 56, "app-vpc Flow Logs", icon_eye))
+    bucket_x = 320
+    services.append(service_box(bucket_x, 40, 220, 56, "S3: raw/ -> processed/", icon_bucket))
+    flows.append(orthogonal_path([(vpc_x + 200, 68), (bucket_x, 68)], "east-west", bidirectional=False))
+
+    pre_x = 620
+    services.append(service_box(pre_x, 40, 220, 56, "flow-log-preprocessor", icon_server, sub="daily -- numeric features -> CSV"))
+    flows.append(orthogonal_path([(bucket_x + 220, 68), (pre_x, 68)], "east-west", bidirectional=False))
+
+    train_x, train_y = 620, 152
+    services.append(service_box(train_x, train_y, 220, 56, "rcf-trainer", icon_server, sub="weekly -- CreateTrainingJob (RCF)"))
+    flows.append(orthogonal_path([(pre_x + 110, 96), (train_x + 110, train_y)], "north-south", bidirectional=False))
+
+    promote_x = 900
+    services.append(service_box(promote_x, train_y, 240, 56, "rcf-model-promoter", icon_server, sub="on training completion"))
+    flows.append(orthogonal_path([(train_x + 220, train_y + 28), (promote_x, train_y + 28)], "east-west", dashed=True, bidirectional=False))
+    flows.append(f'<text x="{train_x + 224}" y="{train_y - 6}" class="flow-label">EventBridge: Training Job State Change</text>')
+
+    endpoint_x = 1220
+    services.append(service_box(endpoint_x, train_y, 240, 56, "Async Inference Endpoint", icon_lb, sub="scale-to-zero autoscaling"))
+    flows.append(orthogonal_path([(promote_x + 240, train_y + 28), (endpoint_x, train_y + 28)], "east-west", bidirectional=False))
+
+    scorer_x, scorer_y = 900, 264
+    services.append(service_box(scorer_x, scorer_y, 240, 56, "rcf-batch-scorer", icon_server, sub="every 6h -- CreateTransformJob"))
+    flows.append(orthogonal_path([(promote_x + 120, train_y + 56), (scorer_x + 120, scorer_y)], "north-south", dashed=True, bidirectional=False))
+    flows.append(f'<text x="{scorer_x - 4}" y="{scorer_y - 6}" class="label-service-sub">uses the currently-promoted model</text>')
+
+    findings_x = 1220
+    services.append(service_box(findings_x, scorer_y, 240, 56, "rcf-findings-processor", icon_server, sub="on transform completion"))
+    flows.append(orthogonal_path([(scorer_x + 240, scorer_y + 28), (findings_x, scorer_y + 28)], "east-west", dashed=True, bidirectional=False))
+
+    dynamo_y = 128
+    services.append(service_box(40, dynamo_y, 200, 56, "DynamoDB findings", icon_bucket, sub="read by detect_anomalies"))
+    sns_s3_y = dynamo_y + 72
+    services.append(service_box(40, sns_s3_y, 200, 48, "SNS + S3", icon_bucket))
+    flows.append(orthogonal_path([(findings_x + 120, scorer_y + 56), (findings_x + 120, sns_s3_y + 24), (240, sns_s3_y + 24)], "north-south", dashed=True, bidirectional=False))
+
+    boundaries.append(boundary(40, sns_s3_y + 72, 220, 72, "teardown_cleanup (on cdk destroy only)", small=True))
+
+    defs = "\n".join(
+        f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+        f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
+        for cls in ("north-south", "east-west")
+    )
+    return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="sm-diagram-title sm-diagram-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="sm-diagram-title">SageMaker anomaly-detection layer (ENABLE_SAGEMAKER)</title>
+  <desc id="sm-diagram-desc">VPC Flow Logs land in S3 and get preprocessed into numeric-feature CSV daily; a weekly training job produces a new Random Cut Forest model generation, which a promoter Lambda swaps onto a scale-to-zero Async Inference endpoint; a separate 6-hourly batch-transform job scores accumulated data in bulk with whichever model is currently promoted, and a findings processor turns qualifying anomaly scores into DynamoDB + S3 + SNS output that agentic_ai_stack.py's detect_anomalies MCP tool reads. Because training/transform jobs aren't CloudFormation resources, a teardown custom resource sweeps every runtime-created endpoint/model/config on `cdk destroy`.</desc>
+  <defs>{defs}</defs>
+  <g id="sm-services">{"".join(services)}</g>
+  <g id="sm-boundaries">{"".join(boundaries)}</g>
+  <g id="sm-flows">{"".join(flows)}</g>
 </svg>'''
 
 
@@ -643,6 +830,8 @@ def build_html() -> str:
     svg = build_svg()
     gov_svg = build_governance_svg()
     wan_svg = build_cloudwan_svg()
+    ai_svg = build_agentic_ai_svg()
+    sagemaker_svg = build_sagemaker_svg()
     return f'''<!doctype html>
 <html lang="en">
 <head>
@@ -686,6 +875,22 @@ def build_html() -> str:
   <figure>
     <div class="diagram-scroll">
       {wan_svg}
+    </div>
+  </figure>
+
+  <h2>Agentic AI Layer</h2>
+  <p class="subtitle">agentic_ai_stack.py &middot; gated behind ENABLE_AI (off by default -- see README.md's cost warning)</p>
+  <figure>
+    <div class="diagram-scroll">
+      {ai_svg}
+    </div>
+  </figure>
+
+  <h2>SageMaker Anomaly Detection</h2>
+  <p class="subtitle">sagemaker_stack.py &middot; gated behind ENABLE_SAGEMAKER (off by default -- see README.md's cost warning)</p>
+  <figure>
+    <div class="diagram-scroll">
+      {sagemaker_svg}
     </div>
   </figure>
 </main>

@@ -9,7 +9,10 @@ import os
 # ---------------------------------------------------------------------------
 # AWS environment
 # ---------------------------------------------------------------------------
-AWS_ACCOUNT_ID = os.environ.get("CDK_DEFAULT_ACCOUNT", "458798438816")
+# No hardcoded fallback -- if CDK_DEFAULT_ACCOUNT isn't set, this stays None,
+# which cdk.Environment() treats as "environment-agnostic" and resolves from
+# whatever AWS credentials/profile the CDK CLI is currently using.
+AWS_ACCOUNT_ID = os.environ.get("CDK_DEFAULT_ACCOUNT")
 AWS_REGION = os.environ.get("CDK_DEFAULT_REGION", "us-east-1")
 
 # Local AWS CLI / CDK commands should be run with `--profile deloitte` (or
@@ -70,9 +73,24 @@ ENABLE_CLOUDWAN = os.environ.get("ENABLE_CLOUDWAN", "false").lower() == "true"
 SECOND_REGION = os.environ.get("SECOND_REGION", "us-east-2")
 
 # Governance / drift-remediation (governance_stack.py / drift_remediation_stack.py).
-REMEDIATION_EMAIL = os.environ.get("REMEDIATION_EMAIL", "luberguilarte@gmail.com")
+REMEDIATION_EMAIL = os.environ.get("REMEDIATION_EMAIL", "you@example.com")
 # True = the drift-remediator Lambda only alerts (SNS), never deletes.
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+
+# Agentic AI layer (agentic_ai_stack.py) -- API Gateway + orchestrator Lambda +
+# Bedrock AgentCore Runtime/Gateway/Memory/Identity + MCP tool Lambdas. Off by
+# default: Bedrock AgentCore + S3 Vectors + a Knowledge Base are all
+# meaningfully billable even idle, so this is a deploy-tour-teardown demo
+# layer like ENABLE_CLOUDWAN, not something to leave running.
+ENABLE_AI = os.environ.get("ENABLE_AI", "false").lower() == "true"
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0")
+
+# SageMaker anomaly-detection layer (sagemaker_stack.py) -- Async Inference
+# endpoint + RCF training on VPC Flow Logs. Independently gated from
+# ENABLE_AI since it's a separate, also-billable-even-idle demo layer (an
+# Async Inference endpoint bills for its underlying instance while it
+# exists, scale-to-zero notwithstanding for the instance itself).
+ENABLE_SAGEMAKER = os.environ.get("ENABLE_SAGEMAKER", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # VPC CIDR blocks (SPEC.md Section 4)
@@ -115,7 +133,7 @@ NAT_GATEWAY_COUNT = 1  # single, centralized -- put internet-needing things in a
 # per-layer AWS Resource Groups built in resource_groups_stack.py.
 # ---------------------------------------------------------------------------
 PROJECT_TAG = "lattice-lab"
-OWNER_TAG = os.environ.get("OWNER_TAG", "LuberCloudNinja")
+OWNER_TAG = os.environ.get("OWNER_TAG", "your-org")
 
 STANDARD_TAGS = {
     "Project": PROJECT_TAG,
@@ -143,6 +161,8 @@ class Layer:
     ORG = "org"
     CLOUDWAN = "cloudwan"
     REGION2 = "region2"
+    AI = "ai"
+    SAGEMAKER = "sagemaker"
 
 
 ALL_LAYERS = [
@@ -160,4 +180,6 @@ ALL_LAYERS = [
     Layer.ORG,
     Layer.CLOUDWAN,
     Layer.REGION2,
+    Layer.AI,
+    Layer.SAGEMAKER,
 ]

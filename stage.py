@@ -16,6 +16,8 @@ from aws_cdk import Stage
 from constructs import Construct
 
 import config
+from stacks.agentic_ai_stack import AgenticAiStack
+from stacks.auto_heal_stack import AutoHealStack
 from stacks.cloudwan_stack import CloudWanStack
 from stacks.diagram_stack import DiagramStack
 from stacks.drift_remediation_stack import DriftRemediationStack
@@ -28,6 +30,7 @@ from stacks.observability_stack import ObservabilityStack
 from stacks.privatelink_stack import PrivateLinkStack
 from stacks.region2_stack import Region2Stack
 from stacks.resource_groups_stack import ResourceGroupsStack
+from stacks.sagemaker_stack import SageMakerStack
 from stacks.security_stack import SecurityStack
 from stacks.threetier_stack import ThreeTierStack
 
@@ -61,7 +64,7 @@ class LandingZoneStage(Stage):
         # of relying on retry timing.
         threetier.add_dependency(privatelink)
         lattice = LatticeStack(self, "LatticeStack", network=network, threetier=threetier, security=security)
-        ObservabilityStack(
+        observability = ObservabilityStack(
             self, "ObservabilityStack",
             inspection=inspection, threetier=threetier, lattice=lattice, security=security,
         )
@@ -73,7 +76,7 @@ class LandingZoneStage(Stage):
         # WAN below, CloudTrail/Config/SecurityHub/GuardDuty at this scale
         # cost cents, not dollars).
         GovernanceStack(self, "GovernanceStack", security=security)
-        DriftRemediationStack(self, "DriftRemediationStack", network=network, security=security)
+        drift_remediation = DriftRemediationStack(self, "DriftRemediationStack", network=network, security=security)
 
         if config.ENABLE_KAFKA:
             KafkaStack(self, "KafkaStack")
@@ -82,6 +85,7 @@ class LandingZoneStage(Stage):
         # (default off; see README.md's cost warning). cross_region_references
         # lets region2_stack (env=us-east-2) consume cloudwan_stack's core
         # network id even though the two stacks deploy to different regions.
+        cloudwan = None
         if config.ENABLE_CLOUDWAN:
             cloudwan = CloudWanStack(
                 self, "CloudWanStack",
@@ -95,3 +99,34 @@ class LandingZoneStage(Stage):
                 env=cdk.Environment(account=config.AWS_ACCOUNT_ID, region=config.SECOND_REGION),
                 cross_region_references=True,
             )
+
+        # SageMaker anomaly-detection layer -- gated behind
+        # config.ENABLE_SAGEMAKER (default off; see README's cost warning).
+        sagemaker = None
+        if config.ENABLE_SAGEMAKER:
+            sagemaker = SageMakerStack(self, "SageMakerStack", network=network, security=security)
+
+        # Agentic AI layer -- gated behind config.ENABLE_AI (default off; see
+        # README's cost warning). Deployed last, after network-hardening +
+        # governance + Cloud WAN + SageMaker, since its MCP tools read state
+        # from all of them. cloudwan/sagemaker are only passed (enabling the
+        # cloudwan_topology/detect_anomalies MCP tools) when those layers are
+        # also on.
+        agentic_ai = None
+        if config.ENABLE_AI:
+            agentic_ai = AgenticAiStack(
+                self, "AgenticAiStack",
+                network=network, security=security, threetier=threetier, lattice=lattice,
+                cloudwan=cloudwan, sagemaker=sagemaker,
+            )
+
+        # Auto-heal loop + dashboard extensions -- deployed unconditionally,
+        # last, since it's positioned after every optional layer above that
+        # might or might not exist by this point (see auto_heal_stack.py's
+        # module docstring).
+        AutoHealStack(
+            self, "AutoHealStack",
+            network=network, threetier=threetier, security=security,
+            drift_remediation=drift_remediation, observability=observability,
+            agentic_ai=agentic_ai, sagemaker=sagemaker,
+        )

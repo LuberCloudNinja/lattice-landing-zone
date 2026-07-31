@@ -6,6 +6,16 @@ cdk.out/
 *.egg-info/
 .DS_Store
 .claude/
+node_modules/
+.env
+*.local
+
+# Account/region-specific CDK context cache (AZ lookups etc.) -- tied to
+# whichever real AWS account ran `cdk synth` last, and gets regenerated
+# automatically on the next synth against any account. Doesn't belong in a
+# public repo and isn't portable to a clone deploying under a different
+# account anyway.
+cdk.context.json
 
 # Self-signed cert + PRIVATE KEY generated at synth time by
 # lattice_stack.py's _import_self_signed_certificate() (regenerated fresh on
@@ -13,3 +23,4 @@ cdk.out/
 # artifact, and a private key file regardless of how low-stakes, never belongs
 # in git history.
 stacks/assets/lattice/_generated_cert/
+*.pem

@@ -54,15 +54,16 @@ class PipelineStack(Stack):
                     "npx cdk synth",
                 ],
                 # TEMPORARY, deliberately -- Cloud WAN's core network +
-                # attachments cost real money per-attachment/per-GB on top
-                # of the TGW this project already runs (see README.md's
-                # cost warning); this is meant to be deployed for a demo,
-                # toured, then torn down, not left on as the pipeline's
-                # permanent default. Revert this to unset (or explicitly
-                # "false") once the demo is done, BEFORE the next pipeline
-                # run, so Cloud WAN doesn't silently stay in the synth
-                # target after `cdk destroy`.
-                env={"ENABLE_CLOUDWAN": "true"},
+                # attachments, Bedrock AgentCore/S3 Vectors/Knowledge Base,
+                # and the SageMaker Async Inference endpoint all cost real
+                # money on top of what this project already runs (see
+                # README.md's cost warnings); this is meant to be deployed
+                # for a demo, toured, then torn down, not left on as the
+                # pipeline's permanent default. Revert these to unset (or
+                # explicitly "false") once the demo is done, BEFORE the
+                # next pipeline run, so none of these silently stay in the
+                # synth target after `cdk destroy`.
+                env={"ENABLE_CLOUDWAN": "true", "ENABLE_AI": "true", "ENABLE_SAGEMAKER": "true"},
             ),
         )
 

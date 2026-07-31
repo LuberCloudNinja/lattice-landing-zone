@@ -448,7 +448,7 @@ class NetworkStack(Stack):
             actions=["ec2:DescribeVpnConnections", "ec2:DescribeCustomerGateways"], resources=["*"]
         ))
 
-        libreswan = ec2.Instance(
+        self.libreswan = libreswan = ec2.Instance(
             self, "LibreswanCgw",
             vpc=self.onprem_vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_group_name="Public"),
@@ -478,7 +478,7 @@ class NetworkStack(Stack):
             ip_address=libreswan_eip.attr_public_ip,
         )
 
-        vpn_connection = ec2.CfnVPNConnection(
+        self.vpn_connection = vpn_connection = ec2.CfnVPNConnection(
             self, "OnpremVpnConnection",
             type="ipsec.1",
             customer_gateway_id=customer_gateway.attr_customer_gateway_id,

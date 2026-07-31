@@ -419,14 +419,14 @@ class LatticeStack(Stack):
             description="Lattice resource gateway -- outbound to on-prem broker via TGW+VPN",
             allow_all_outbound=True,
         )
-        resource_gateway = vl.CfnResourceGateway(
+        self.resource_gateway = resource_gateway = vl.CfnResourceGateway(
             self, "OnpremResourceGateway",
             name="onprem-broker-gateway",
             vpc_identifier=app_vpc.vpc_id,
             subnet_ids=app_vpc.select_subnets(subnet_group_name="Private").subnet_ids,
             security_group_ids=[resource_gateway_sg.security_group_id],
         )
-        resource_config = vl.CfnResourceConfiguration(
+        self.onprem_broker_resource_config = resource_config = vl.CfnResourceConfiguration(
             self, "OnpremBrokerResourceConfig",
             name="onprem-broker",
             resource_configuration_type="SINGLE",

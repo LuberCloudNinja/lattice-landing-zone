@@ -103,7 +103,7 @@ class ObservabilityStack(Stack):
             statistic="Sum", period=Duration.minutes(5),
         )
 
-        dashboard = cw.Dashboard(self, "Dashboard", dashboard_name="lattice-lab")
+        self.dashboard = dashboard = cw.Dashboard(self, "Dashboard", dashboard_name="lattice-lab")
         dashboard.add_widgets(
             cw.TextWidget(markdown="# lattice-lab -- interview demo health check", width=24, height=1),
         )
