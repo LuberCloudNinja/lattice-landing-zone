@@ -18,6 +18,7 @@ by this stack -- see README.md.
 import aws_cdk as cdk
 from aws_cdk import Stack, pipelines
 from aws_cdk import aws_codecommit as codecommit
+from aws_cdk import aws_iam as iam
 from constructs import Construct
 
 import config
@@ -73,3 +74,22 @@ class PipelineStack(Stack):
         # Manual approval gate before anything in the stage actually deploys
         # (SPEC.md Section 7: "I can remove it later").
         pipeline.add_stage(landing_zone, pre=[pipelines.ManualApprovalStep("PromoteToLandingZone")])
+
+        # cdk.context.json is deliberately NOT committed (see .gitignore --
+        # it's an account-specific build artifact, out of place in a public
+        # repo). Without it, every `cdk synth` -- including this one,
+        # running fresh in CodeBuild with no local cache -- resolves each
+        # ec2.Vpc's AZs via a live ec2:DescribeAvailabilityZones call
+        # instead of a cached lookup. Grant it here rather than re-adding
+        # the context file: a read-only, account-wide describe call is a
+        # smaller, more honest footprint than a checked-in file that's
+        # both stale-prone and tied to one specific AWS account.
+        # build_pipeline() forces the underlying CodeBuild project (and its
+        # role) to materialize now -- pipeline.synth_project is otherwise
+        # only resolved lazily during CDK's own synth pass. Must run AFTER
+        # add_stage() above, or the LandingZone stage/its ManualApprovalStep
+        # would be locked out of the already-built pipeline.
+        pipeline.build_pipeline()
+        pipeline.synth_project.add_to_role_policy(iam.PolicyStatement(
+            actions=["ec2:DescribeAvailabilityZones"], resources=["*"],
+        ))
