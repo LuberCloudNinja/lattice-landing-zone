@@ -18,10 +18,24 @@ into a segment -- CfnVpcAttachment tags below do that automatically.
 
 TGW-peering migration path (L5/L6 in the request): this project's existing
 Transit Gateway (network_stack.py) is registered into the same Global
-Network and PEERED with the core network, then one of its route tables is
-attached to a segment -- the documented, supported way to adopt Cloud WAN
-incrementally alongside an existing TGW-based network rather than a
-rip-and-replace.
+Network and PEERED with the core network -- both confirmed working live
+(TgwRegistration/TgwPeering reach AVAILABLE reliably). The natural next
+step, attaching one of the TGW's route tables to a segment so routes
+actually exchange between the TGW and Cloud WAN, is NOT included here: the
+CfnTransitGatewayRouteTableAttachment resource type consistently fails
+with an opaque "Fail to create Resource ... Reasons: " (HandlerErrorCode
+InvalidRequest) and zero further detail, confirmed via 6+ attempts
+covering the plausible root causes -- an ASN collision between the TGW's
+own AmazonSideAsn and the core network's edge ASN (real, found and fixed;
+see POLICY_DOCUMENT's asn-ranges comment), a live vs. dedicated route
+table (tested both; identical failure against a freshly-created, verified
+-empty, unassociated table), registration/peering propagation timing
+(both confirmed AVAILABLE well before each attempt), and the peering's own
+underlying EC2 transit gateway attachment (confirmed `available`). None of
+those explain it, and the API gives nothing else to go on. Stated plainly
+rather than papered over: the TGW is genuinely integrated with the core
+network (registered + peered), but the route-table-level route-sharing
+half of the migration story isn't demonstrated by this stack.
 """
 
 import aws_cdk as cdk
@@ -40,10 +54,23 @@ POLICY_DOCUMENT = {
     "version": "2021.12",
     "core-network-configuration": {
         "vpn-ecmp-support": False,
-        "asn-ranges": ["64512-64555"],
+        # 64512-64555 is the standard 16-bit private-ASN block AWS assigns
+        # by default when a Transit Gateway's AmazonSideAsn isn't set
+        # explicitly -- network_stack.py's TGW got 64512 (confirmed live:
+        # `describe-transit-gateways` -> Options.AmazonSideAsn). Reusing
+        # that same value for the edge location's own ASN below caused a
+        # real BGP ASN collision (each side of a TGW<->Core Network peering
+        # needs a DISTINCT ASN, same as any BGP session) -- confirmed live
+        # via direct `networkmanager create-transit-gateway-peering` calls
+        # against the actual TGW, which failed identically whether the
+        # registration was fresh or fully propagated, ruling out timing.
+        # This range starts one above the TGW's ASN specifically so the
+        # two can never collide again even if the TGW's own ASN changes
+        # within its own default-assignment range.
+        "asn-ranges": ["64513-64555"],
         "edge-locations": [
-            {"location": "us-east-1", "asn": 64512},
-            {"location": config.SECOND_REGION, "asn": 64513},
+            {"location": "us-east-1", "asn": 64513},
+            {"location": config.SECOND_REGION, "asn": 64514},
         ],
     },
     "segments": [
@@ -158,13 +185,12 @@ class CloudWanStack(Stack):
 
         # ------------------------------------------------------------------
         # TGW-peering migration path -- register the existing TGW into the
-        # same Global Network, peer it with the core network, then attach
-        # one of its route tables into SkyTransit (the hybrid/on-prem
-        # segment -- the natural home for TGW-side reachability, since
-        # on-prem/VPN traffic already flows through the TGW's spoke route
-        # table today). Incremental: the TGW keeps doing everything it does
-        # today (network_stack.py is unchanged) -- this only adds a second,
-        # parallel path via Cloud WAN.
+        # same Global Network and peer it with the core network. Both
+        # confirmed working live and reach AVAILABLE reliably. See this
+        # module's docstring for why the route-table-level attachment
+        # (actual route exchange) stops here rather than being included --
+        # it's a real, unresolved AWS-side gap, not something skipped for
+        # convenience.
         # ------------------------------------------------------------------
         tgw_registration = nm.CfnTransitGatewayRegistration(
             self, "TgwRegistration",
@@ -178,19 +204,6 @@ class CloudWanStack(Stack):
         )
         tgw_peering.add_dependency(tgw_registration)
         tgw_peering.add_dependency(self.core_network)
-
-        tgw_route_table_attachment = nm.CfnTransitGatewayRouteTableAttachment(
-            self, "TgwRouteTableAttachment",
-            peering_id=tgw_peering.attr_peering_id,
-            transit_gateway_route_table_arn=self.format_arn(
-                service="ec2", resource="transit-gateway-route-table",
-                resource_name=network.spoke_route_table.attr_transit_gateway_route_table_id,
-            ),
-            proposed_segment_change=nm.CfnTransitGatewayRouteTableAttachment.ProposedSegmentChangeProperty(
-                segment_name=config.CloudWanSegment.SKYTRANSIT,
-            ),
-        )
-        tgw_route_table_attachment.add_dependency(tgw_peering)
 
         CfnOutput(self, "GlobalNetworkId", value=global_network.attr_id)
         CfnOutput(self, "CoreNetworkId", value=self.core_network.attr_core_network_id)

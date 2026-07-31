@@ -509,10 +509,10 @@ def build_cloudwan_svg() -> str:
     flows.append(orthogonal_path([seg_centers["FastTrack"], (provider_x + 100, provider_y)], "north-south", bidirectional=False))
 
     tgw_x, tgw_y = 680, 280
-    services.append(service_box(tgw_x, tgw_y, 200, 64, "Existing TGW", icon_lb, sub="peered -> SkyTransit"))
-    flows.append(orthogonal_path([seg_centers["SkyTransit"], (tgw_x + 100, tgw_y)], "north-south", bidirectional=False))
-    flows.append(f'<text x="{tgw_x - 4}" y="{tgw_y + 100}" class="label-service-sub">TGW-peering migration path -- ' +
-                 'incremental, not rip-and-replace</text>')
+    services.append(service_box(tgw_x, tgw_y, 200, 64, "Existing TGW", icon_lb, sub="registered + peered"))
+    flows.append(orthogonal_path([seg_centers["SkyTransit"], (tgw_x + 100, tgw_y)], "north-south", dashed=True, bidirectional=False))
+    flows.append(f'<text x="{tgw_x - 4}" y="{tgw_y + 100}" class="label-service-sub">Peering only -- route-table attachment into ' +
+                 'SkyTransit unresolved (AWS-side, see cloudwan_stack.py)</text>')
 
     share_y = seg_y + 56 + 24
     share_x = (seg_centers["SkyTransit"][0] + seg_centers["FastTrack"][0]) // 2
@@ -537,7 +537,7 @@ def build_cloudwan_svg() -> str:
     )
     return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="wan-diagram-title wan-diagram-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="wan-diagram-title">Multi-region AWS Cloud WAN (ENABLE_CLOUDWAN)</title>
-  <desc id="wan-diagram-desc">A Cloud WAN core network spanning us-east-1 and us-east-2, with four segments -- FastTrack, SkyPath, SkyTransit, and Workload (isolated) -- app-vpc and provider-vpc attached in us-east-1, a second Workload VPC attached in us-east-2, and the existing Transit Gateway peered into the SkyTransit segment as an incremental migration path.</desc>
+  <desc id="wan-diagram-desc">A Cloud WAN core network spanning us-east-1 and us-east-2, with four segments -- FastTrack, SkyPath, SkyTransit, and Workload (isolated) -- app-vpc and provider-vpc attached in us-east-1, a second Workload VPC attached in us-east-2, and the existing Transit Gateway registered and peered with the core network as an incremental migration path. Route-table-level attachment into the SkyTransit segment is not included -- a confirmed AWS-side gap, documented in cloudwan_stack.py.</desc>
   <defs>{defs}</defs>
   <g id="wan-boundaries">{"".join(boundaries)}</g>
   <g id="wan-services">{"".join(services)}</g>

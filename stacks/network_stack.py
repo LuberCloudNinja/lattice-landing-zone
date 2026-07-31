@@ -217,12 +217,14 @@ class NetworkStack(Stack):
             vpc_id=self.app_vpc.vpc_id,
             subnet_ids=self.app_vpc.select_subnets(subnet_group_name="TgwAttach").subnet_ids,
         )
+        self.app_vpc_attachment = app_att
         provider_att = ec2.CfnTransitGatewayVpcAttachment(
             self, "ProviderVpcAttachment",
             transit_gateway_id=self.tgw.ref,
             vpc_id=self.provider_vpc.vpc_id,
             subnet_ids=self.provider_vpc.select_subnets(subnet_group_name="Private").subnet_ids,
         )
+        self.provider_vpc_attachment = provider_att
         # Mandatory for flow symmetry once inspection_stack.py's GWLB target
         # group also has Appliance Mode enabled -- see
         # docs/inspection-architecture-reference.md Section 4.2. These are

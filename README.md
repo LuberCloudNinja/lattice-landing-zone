@@ -168,10 +168,19 @@ already runs; it is not a cheap thing to leave running.
   us-east-1; a second small Workload VPC (`region2_stack.py`, a
   NAT/IGW-free VPC reachable only via SSM) in us-east-2.
 - **TGW-peering migration path**: the existing Transit Gateway is
-  registered into the same Global Network and peered with the core
-  network, then one of its route tables is attached into the `SkyTransit`
-  segment -- an incremental, additive path onto Cloud WAN, not a
-  rip-and-replace of the TGW this project already depends on.
+  registered into the same Global Network and peered with the core network
+  -- confirmed working, both reach `AVAILABLE` reliably -- an incremental,
+  additive path onto Cloud WAN, not a rip-and-replace of the TGW this
+  project already depends on. **Known gap, stated plainly**: attaching one
+  of the TGW's route tables into a segment (the piece that would make
+  routes actually exchange between the TGW and Cloud WAN) is not included.
+  `AWS::NetworkManager::TransitGatewayRouteTableAttachment` consistently
+  failed with an opaque, detail-free `InvalidRequest` across 6+ direct API
+  attempts covering every plausible cause (ASN collision -- real, found
+  and fixed; a live vs. dedicated route table; registration/peering
+  propagation timing; the peering's own EC2-side attachment state) with no
+  further explanation available from the API. See `cloudwan_stack.py`'s
+  module docstring for the full troubleshooting record.
 - Attachments file themselves into the right segment automatically via a
   `segment` tag + `attachment-policies` (tag-based association) -- nothing
   wires a VPC into a segment by hand.
