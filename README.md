@@ -48,8 +48,8 @@ none of the above and is deployable as-is.
 **Every stack sets `RemovalPolicy.DESTROY` + `auto_delete_objects`/
 `deletion_protection=False` throughout specifically so `cdk destroy --all`
 leaves nothing behind** -- this is a deliberate, verified design choice (see
-the cdk-nag suppressions for `AwsSolutions-EC29`/`RDS10` in each stack), not
-an oversight to fix before a "real" deployment.
+the cdk-nag suppression for `AwsSolutions-EC29` in each stack with EC2
+instances), not an oversight to fix before a "real" deployment.
 
 ## Bootstrap (once)
 
@@ -88,7 +88,7 @@ approving, same review you'd want even though this README exists.
 
 | Flag | Default | Effect |
 |---|---|---|
-| `MULTI_AZ` | `false` | Flips non-HA tiers (RDS, app-vpc/onprem-vpc/provider-vpc AZ count) from single-AZ to 2-AZ. Does **not** affect the inspection VPC, which is always 2 AZs (`config.INSPECTION_AZ_COUNT`) with 2 firewall appliances per AZ (`config.FIREWALL_APPLIANCES_PER_AZ`) regardless -- that's a fixed HA requirement, not a cost/HA trade-off. |
+| `MULTI_AZ` | `false` | Flips non-HA tiers (onprem-vpc/provider-vpc AZ count, ThreeTierStack/PrivateLinkStack's Fargate desired task count) from single-AZ/single-task to 2. Does **not** affect app-vpc, which is fixed at >=2 AZs regardless (originally an RDS DBSubnetGroup requirement, kept after that stack's DynamoDB swap -- see network_stack.py), or the inspection VPC, which is always 2 AZs (`config.INSPECTION_AZ_COUNT`) with 2 firewall appliances per AZ (`config.FIREWALL_APPLIANCES_PER_AZ`) regardless -- that's a fixed HA requirement, not a cost/HA trade-off. |
 | `ENABLE_KAFKA` | `false` | `KafkaStack` isn't instantiated at all until this is `true` -- deploy everything else first, per SPEC.md's "deploy LAST" instruction. |
 | `ENABLE_RAM_SHARE` / `SECOND_ACCOUNT_ID` | off | Set `SECOND_ACCOUNT_ID` to actually create the AWS RAM cross-account share of the Lattice service network; otherwise `LatticeStack` prints what *would* be created (`RamShareNotCreated` output). |
 

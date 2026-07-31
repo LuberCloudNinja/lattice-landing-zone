@@ -222,9 +222,9 @@ class PrivateLinkStack(Stack):
 
         # A VPC Endpoint Service only supports the AZs its backing NLB
         # actually has nodes in (provider_vpc's own AZ count, independent of
-        # app_vpc's -- app_vpc needs >=2 AZs for RDS's DBSubnetGroup
-        # requirement per network_stack.py, provider_vpc has no such forced
-        # requirement and stays on the general MULTI_AZ-driven az_count).
+        # app_vpc's -- app_vpc is fixed at >=2 AZs per network_stack.py,
+        # provider_vpc has no such forcing and stays on the general
+        # MULTI_AZ-driven az_count).
         # Selecting all of app_vpc's Private subnets unrestricted would try
         # to place an ENI in an AZ the service doesn't support ("does not
         # support the availability zone of the subnet") whenever the two

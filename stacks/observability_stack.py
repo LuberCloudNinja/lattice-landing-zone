@@ -115,9 +115,9 @@ class ObservabilityStack(Stack):
                 width=12, height=6,
             ),
             cw.GraphWidget(
-                title="RDS",
-                left=[threetier.database.metric_cpu_utilization()],
-                right=[threetier.database.metric_database_connections()],
+                title="DynamoDB",
+                left=[threetier.database.metric_consumed_read_capacity_units(), threetier.database.metric_consumed_write_capacity_units()],
+                right=[threetier.database.metric_throttled_requests()],
                 width=12, height=6,
             ),
         )

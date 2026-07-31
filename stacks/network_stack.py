@@ -52,13 +52,15 @@ class NetworkStack(Stack):
         Tags.of(self).add("Layer", config.Layer.NETWORK)
 
         az_count = 2 if config.MULTI_AZ else 1
-        # RDS's DBSubnetGroup requires >= 2 AZ coverage unconditionally, even
-        # for a single-AZ instance (threetier_stack.py's multi_az=config.MULTI_AZ
-        # governs actual instance HA/cost separately) -- this is a hard AWS
-        # API constraint, not a HA choice, so app-vpc's subnet AZ count can't
-        # follow the general MULTI_AZ cost toggle the way provider-vpc/
-        # onprem-vpc do. Subnets themselves are free; only compute placed in
-        # them costs money, so this doesn't undercut MULTI_AZ's cost intent.
+        # app-vpc gets >= 2 AZs unconditionally -- originally a hard
+        # requirement (RDS's DBSubnetGroup needs >= 2 AZ coverage even for a
+        # single-AZ instance). threetier_stack.py's data tier is DynamoDB
+        # now, which has no such constraint, but this is left at 2 AZs
+        # anyway: subnets themselves are free (only compute placed in them
+        # costs money, so this doesn't undercut MULTI_AZ's cost intent), and
+        # reverting risks destabilizing NetworkStack/InspectionStack/
+        # PrivateLinkStack, which all already reference these exact
+        # subnets and are stable as of this change.
         app_az_count = max(az_count, 2)
 
         # ------------------------------------------------------------------

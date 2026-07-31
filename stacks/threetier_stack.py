@@ -1,4 +1,4 @@
-"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (ALB+Fargate) -> data tier (RDS).
+"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (ALB+Fargate) -> data tier (DynamoDB).
 
 See SPEC.md Section 6 ("threetier_stack.py (three-tier web app)").
 
@@ -24,12 +24,12 @@ import aws_cdk as cdk
 from aws_cdk import CfnOutput, Duration, Stack, Tags
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
+from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
-from aws_cdk import aws_rds as rds
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_deployment as s3_deploy
 from cdk_nag import NagPackSuppression, NagSuppressions
@@ -250,38 +250,36 @@ class ThreeTierStack(Stack):
         )
 
         # ------------------------------------------------------------------
-        # Data tier: RDS, reachable only from the app tier's own SG (not a
-        # separate subnet tier -- SPEC.md Section 6 scopes isolation to the
-        # security group, and app-vpc's existing Private subnet already
-        # routes everything through inspection first, same as the app tier).
+        # Data tier: DynamoDB -- on-demand billing (true scale-to-zero, no
+        # idle cost, no capacity planning), reachable only via the app
+        # task's own IAM role (not a network-level control the way RDS's
+        # security group was -- DynamoDB is an AWS-managed API endpoint,
+        # not something with a listening port/SG of its own). Access is
+        # scoped by IAM grant, not network reachability, which is the
+        # correct control for a DynamoDB table regardless.
         # ------------------------------------------------------------------
-        db_sg = ec2.SecurityGroup(
-            self, "DbSg",
-            vpc=vpc,
-            description="RDS -- inbound from the app tier only",
-            allow_all_outbound=False,
-        )
-        # Non-default port (cdk-nag AwsSolutions-RDS11) -- trivial, no
-        # functional cost since only the app tier's own SG can reach it
-        # anyway; avoids relying on "everyone knows 5432" as a control.
-        db_port = 5433
-        db_sg.add_ingress_rule(app_sg, ec2.Port.tcp(db_port), "from AppInstanceSg")
-
-        self.database = rds.DatabaseInstance(
+        self.database = dynamodb.TableV2(
             self, "Database",
-            engine=rds.DatabaseInstanceEngine.postgres(version=rds.PostgresEngineVersion.VER_16_3),
-            vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            security_groups=[db_sg],
-            port=db_port,
-            instance_type=ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE4_GRAVITON, ec2.InstanceSize.MICRO),
-            multi_az=config.MULTI_AZ,
-            allocated_storage=20,
-            storage_encrypted=True,
-            database_name="latticelab",
-            credentials=rds.Credentials.from_generated_secret("latticelab_admin"),
+            table_name="latticelab",
+            partition_key=dynamodb.Attribute(name="id", type=dynamodb.AttributeType.STRING),
+            billing=dynamodb.Billing.on_demand(),
+            encryption=dynamodb.TableEncryptionV2.aws_managed_key(),
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=True
+            ),
             removal_policy=cdk.RemovalPolicy.DESTROY,
-            deletion_protection=False,
+        )
+        self.database.grant_read_write_data(app_task_definition.task_role)
+
+        # DynamoDB Gateway VPC Endpoint -- same lesson as the ECR/S3/Logs
+        # interface endpoints above: don't assume the NAT-via-inspection
+        # path reaches every AWS service reliably, verify or route around
+        # it. Gateway endpoints (unlike interface ones) are free.
+        ec2.GatewayVpcEndpoint(
+            self, "AppDynamoDbEndpoint",
+            vpc=vpc,
+            service=ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+            subnets=[ec2.SubnetSelection(subnet_group_name="Private")],
         )
 
         # ------------------------------------------------------------------
@@ -329,7 +327,7 @@ class ThreeTierStack(Stack):
 
         CfnOutput(self, "WebDistributionUrl", value=f"https://{self.distribution.distribution_domain_name}")
         CfnOutput(self, "AppAlbDnsName", value=self.alb.load_balancer_dns_name)
-        CfnOutput(self, "DatabaseSecretArn", value=self.database.secret.secret_arn)
+        CfnOutput(self, "DatabaseTableName", value=self.database.table_name)
         CfnOutput(self, "LatticeInstanceTargetHostId", value=self.lattice_instance_target_host.instance_id)
 
         # ------------------------------------------------------------------
@@ -346,9 +344,9 @@ class ThreeTierStack(Stack):
             NagPackSuppression(
                 id="AwsSolutions-IAM5",
                 reason="Wildcards come from CDK's own grant_read()/BucketDeployment-generated policies, "
-                       "the RDS-generated-secret attachment policy, the Fargate task definition's "
-                       "framework-generated execution role policy, and ECS Exec's SSM channel "
-                       "permissions -- none hand-widened.",
+                       "the DynamoDB table's grant_read_write_data()-generated policy, the Fargate task "
+                       "definition's framework-generated execution role policy, and ECS Exec's SSM "
+                       "channel permissions -- none hand-widened.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-L1",
@@ -385,22 +383,6 @@ class ThreeTierStack(Stack):
                        "the default *.cloudfront.net certificate (no custom domain, per Section 6.16's "
                        "own decision), for which AWS enforces TLSv1.2+ regardless -- cdk-nag's check "
                        "appears not to recognize that default-certificate case.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-RDS3",
-                reason="Single-AZ by design and by cost, per config.MULTI_AZ (default false) -- "
-                       "SPEC.md Section 1's explicit cost-conscious intent for non-HA tiers.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-RDS10",
-                reason="Deletion protection would directly conflict with SPEC.md's `cdk destroy --all` "
-                       "teardown requirement.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-SMG4",
-                reason="Automatic secret rotation needs a rotation Lambda + scheduling -- extra "
-                       "infrastructure not core to this lab; the secret itself is still "
-                       "auto-generated and stored securely in Secrets Manager.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-ELB2",
