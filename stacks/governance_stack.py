@@ -91,6 +91,16 @@ class GovernanceStack(Stack):
             cloud_watch_log_group=trail_log_group,
             management_events=cloudtrail.ReadWriteType.ALL,
         )
+        # Deploy-time failure, confirmed live: "Insufficient permissions to
+        # access S3 bucket ... or KMS key ...". The Trail L2 construct wires
+        # the BUCKET policy for cloudtrail.amazonaws.com automatically, but
+        # buckets_key's own resource policy (security_stack.py) only grants
+        # s3.amazonaws.com -- CloudTrail calls S3 PutObject under its own
+        # service identity, not a generic S3 one, so the CMK needs its own
+        # explicit grant too. Same gap already hit and fixed the same way
+        # for vpc-lattice.amazonaws.com on lattice_stack.py's access-logs
+        # bucket.
+        security.buckets_key.grant_encrypt_decrypt(iam.ServicePrincipal("cloudtrail.amazonaws.com"))
 
         # ------------------------------------------------------------------
         # AWS Config -- recorder (all resource types incl. global) +
