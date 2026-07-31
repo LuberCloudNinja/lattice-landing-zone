@@ -128,6 +128,20 @@ class GovernanceStack(Stack):
         config_bucket.grant_write(config_role)
         security.buckets_key.grant_encrypt_decrypt(config_role)
 
+        # DeliveryChannel BEFORE ConfigurationRecorder, deliberately --
+        # AWS::Config::ConfigurationRecorder implicitly tries to start
+        # recording as part of its own creation, which requires a delivery
+        # channel to already exist (StartConfigurationRecorder fails
+        # without one). The reverse ordering deadlocks: confirmed live, the
+        # recorder sat in CREATE_IN_PROGRESS for 20+ minutes retrying
+        # start-recording against zero delivery channels, since the
+        # channel's own creation was blocked waiting on the recorder.
+        delivery_channel = awsconfig.CfnDeliveryChannel(
+            self, "ConfigDeliveryChannel",
+            name="lattice-lab-delivery-channel",
+            s3_bucket_name=config_bucket.bucket_name,
+            s3_kms_key_arn=security.buckets_key.key_arn,
+        )
         recorder = awsconfig.CfnConfigurationRecorder(
             self, "ConfigRecorder",
             name="lattice-lab-recorder",
@@ -137,13 +151,7 @@ class GovernanceStack(Stack):
                 include_global_resource_types=True,
             ),
         )
-        delivery_channel = awsconfig.CfnDeliveryChannel(
-            self, "ConfigDeliveryChannel",
-            name="lattice-lab-delivery-channel",
-            s3_bucket_name=config_bucket.bucket_name,
-            s3_kms_key_arn=security.buckets_key.key_arn,
-        )
-        delivery_channel.add_dependency(recorder)
+        recorder.add_dependency(delivery_channel)
 
         managed_rules = {
             "RequiredTagsRule": (awsconfig.ManagedRuleIdentifiers.REQUIRED_TAGS, {"tag1Key": "Project", "tag2Key": "Layer"}),
