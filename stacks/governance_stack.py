@@ -128,14 +128,25 @@ class GovernanceStack(Stack):
         config_bucket.grant_write(config_role)
         security.buckets_key.grant_encrypt_decrypt(config_role)
 
-        # DeliveryChannel BEFORE ConfigurationRecorder, deliberately --
-        # AWS::Config::ConfigurationRecorder implicitly tries to start
-        # recording as part of its own creation, which requires a delivery
-        # channel to already exist (StartConfigurationRecorder fails
-        # without one). The reverse ordering deadlocks: confirmed live, the
-        # recorder sat in CREATE_IN_PROGRESS for 20+ minutes retrying
-        # start-recording against zero delivery channels, since the
-        # channel's own creation was blocked waiting on the recorder.
+        # Deliberately NO explicit DependsOn between these two -- both
+        # directions were tried and both are wrong, confirmed live:
+        #   * delivery_channel depends on recorder: deadlocks. Recorder's
+        #     own creation implicitly calls StartConfigurationRecorder,
+        #     which needs a delivery channel to exist; delivery channel
+        #     never even starts creating until recorder finishes, which it
+        #     never does. Recorder sat in CREATE_IN_PROGRESS for 20+
+        #     minutes with zero delivery channels in the account.
+        #   * recorder depends on delivery_channel: fails immediately.
+        #     PutDeliveryChannel requires a configuration recorder to
+        #     already exist ("NoAvailableConfigurationRecorderException"),
+        #     but recorder hasn't been created yet since it's waiting on
+        #     the channel.
+        # This is a genuine circular API requirement, not a CFN ordering
+        # bug -- the documented, community-verified fix (aws/aws-cdk#3492)
+        # is to declare neither dependency and let each resource's own PUT
+        # call succeed independently; ConfigurationRecorder's built-in
+        # stabilization polling already waits for the delivery channel on
+        # its own, without needing to be told to.
         delivery_channel = awsconfig.CfnDeliveryChannel(
             self, "ConfigDeliveryChannel",
             name="lattice-lab-delivery-channel",
@@ -151,7 +162,6 @@ class GovernanceStack(Stack):
                 include_global_resource_types=True,
             ),
         )
-        recorder.add_dependency(delivery_channel)
 
         managed_rules = {
             "RequiredTagsRule": (awsconfig.ManagedRuleIdentifiers.REQUIRED_TAGS, {"tag1Key": "Project", "tag2Key": "Layer"}),
