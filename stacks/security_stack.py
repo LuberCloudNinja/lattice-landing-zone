@@ -130,6 +130,13 @@ class SecurityStack(Stack):
                     effect=iam.Effect.ALLOW,
                     actions=[
                         "ec2:Describe*", "ec2:CreateTags",
+                        # ENI lifecycle for VPC-attached Lambdas (AWSLambdaVPCAccessExecutionRole
+                        # grants these on the identity-policy side, but the boundary is a hard
+                        # ceiling -- confirmed live via drift_remediation_stack.py's Lambda
+                        # failing to create with "does not have permissions to call
+                        # CreateNetworkInterface on EC2" until these were added here too).
+                        "ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:DetachNetworkInterface",
+                        "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses",
                         "ssm:*", "ssmmessages:*", "ec2messages:*",
                         "logs:*", "cloudwatch:PutMetricData", "cloudwatch:GetMetricData",
                         "ecr:GetAuthorizationToken", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
@@ -139,6 +146,16 @@ class SecurityStack(Stack):
                         "vpc-lattice:*",
                         "elasticloadbalancing:Describe*",
                         "s3:GetObject", "s3:PutObject", "s3:ListBucket",
+                        # drift_remediation_stack.py's handler.py: read-for-gating (tag
+                        # checks on the resource an event touched, plus the calling
+                        # principal's own tags) and scoped-remediation (delete) actions --
+                        # see that stack's ReadForGating/ScopedRemediation statements.
+                        "ec2:TerminateInstances", "ec2:DeleteSecurityGroup", "ec2:DeleteVolume",
+                        "s3:DeleteBucket", "s3:GetBucketTagging",
+                        "iam:ListRoleTags", "iam:ListUserTags", "iam:GetRole", "iam:DeleteRole",
+                        "dynamodb:DescribeTable", "dynamodb:ListTagsOfResource", "dynamodb:DeleteTable",
+                        "sns:Publish", "sns:ListTagsForResource", "sns:DeleteTopic",
+                        "lambda:GetFunction", "lambda:ListTags", "lambda:DeleteFunction",
                     ],
                     resources=["*"],
                 ),
