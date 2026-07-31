@@ -102,6 +102,45 @@ class ThreeTierStack(Stack):
         )
 
         # ------------------------------------------------------------------
+        # VPC endpoints Fargate needs to even START in app-vpc. app-vpc's
+        # Private subnets DO have a real internet path (NAT Gateway, routed
+        # through inspection first) unlike provider-vpc's -- so this looked
+        # unnecessary at first. It wasn't: confirmed the hard way (same
+        # failure as privatelink_stack.py's provider task) that the
+        # inspection-routed NAT path isn't reliable/fast enough for the ECR
+        # auth handshake -- "unable to pull registry auth ... dial tcp
+        # ...:443: i/o timeout" on every attempt. Same fix, same reasoning
+        # as privatelink_stack.py's ProviderEcrEndpoint etc.
+        # ------------------------------------------------------------------
+        app_vpc_endpoint_sg = ec2.SecurityGroup(
+            self, "AppVpcEndpointSg",
+            vpc=vpc,
+            description="Interface endpoints (ECR/Logs) for the Fargate app tier -- inbound from app-vpc only",
+            allow_all_outbound=True,
+        )
+        app_vpc_endpoint_sg.add_ingress_rule(
+            ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(443), "app-vpc"
+        )
+        for service_id, service in {
+            "Ecr": ec2.InterfaceVpcEndpointAwsService.ECR,
+            "EcrDocker": ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+            "Logs": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+        }.items():
+            ec2.InterfaceVpcEndpoint(
+                self, f"App{service_id}Endpoint",
+                vpc=vpc,
+                service=service,
+                subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+                security_groups=[app_vpc_endpoint_sg],
+            )
+        ec2.GatewayVpcEndpoint(
+            self, "AppS3Endpoint",
+            vpc=vpc,
+            service=ec2.GatewayVpcEndpointAwsService.S3,
+            subnets=[ec2.SubnetSelection(subnet_group_name="Private")],
+        )
+
+        # ------------------------------------------------------------------
         # App tier compute: ECS Fargate, smallest task size. from_asset()
         # builds app/backend/'s Dockerfile and pushes it to a CDK-managed
         # ECR asset repo at deploy time -- CDK Pipelines automatically runs
