@@ -32,7 +32,13 @@ from stacks.security_stack import SecurityStack
 # Standards ARNs are region-templated, not account-templated -- these are
 # AWS-owned standard definitions, not account resources.
 FSBP_STANDARD_ARN = "arn:aws:securityhub:{region}::standards/aws-foundational-security-best-practices/v/1.0.0"
-CIS_STANDARD_ARN = "arn:aws:securityhub:{region}::standards/cis-aws-foundations-benchmark/v/1.2.0"
+# v1.2.0 (originally used here) no longer exists as a subscribable standard
+# -- confirmed live via `aws securityhub describe-standards`: it's now only
+# a legacy `arn:aws:securityhub:::ruleset/...` resource, a different type
+# CfnStandard can't target. v3.0.0 is the current, stable CIS AWS
+# Foundations Benchmark version (v1.4.0 and v5.0.0 also exist; 3.0.0 is the
+# well-established middle ground, not the newest-and-least-proven).
+CIS_STANDARD_ARN = "arn:aws:securityhub:{region}::standards/cis-aws-foundations-benchmark/v/3.0.0"
 
 # Enable GuardDuty by default alongside the rest of the detection plane --
 # unlike ENABLE_CLOUDWAN (materially expensive) GuardDuty's lab-scale cost
