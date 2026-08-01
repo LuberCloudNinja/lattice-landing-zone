@@ -6,7 +6,7 @@ import GithubLink from "@/components/GithubLink";
 import ChatConsole from "@/components/ChatConsole";
 
 const GITHUB_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone";
-const DIAGRAM_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site";
+const DIAGRAM_URL = "https://lubercloudninja.github.io/lattice-landing-zone/";
 
 export default function HomePage() {
   return (
@@ -53,7 +53,7 @@ export default function HomePage() {
           >
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#9fc2ff]">Explore</p>
             <p className="mt-2 text-sm leading-relaxed text-[#d9e5ff]">
-              The full architecture diagram source on GitHub, every AWS service depicted with the real icon set.
+              The live, interactive architecture reference on GitHub Pages, every AWS service depicted with the real icon set.
             </p>
           </a>
           <a href="#assistant-console" className="rounded-2xl border border-white/15 bg-[#020a1f99] p-4 backdrop-blur-xl hover:border-[#5b9dff60] transition">

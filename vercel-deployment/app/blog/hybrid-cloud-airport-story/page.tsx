@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 const GITHUB_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone";
-const DIAGRAM_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site";
+const DIAGRAM_URL = "https://lubercloudninja.github.io/lattice-landing-zone/";
 
 export default function BlogPost() {
   return (
@@ -85,7 +85,7 @@ export default function BlogPost() {
             rel="noopener noreferrer"
             className="text-[#9fc2ff] no-underline hover:underline"
           >
-            diagram-site
+            lubercloudninja.github.io/lattice-landing-zone
           </a>
           .
         </p>
@@ -210,7 +210,7 @@ export default function BlogPost() {
               rel="noopener noreferrer"
               className="font-mono text-[#9fc2ff] font-semibold hover:underline"
             >
-              github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site
+              lubercloudninja.github.io/lattice-landing-zone
             </a>
           </div>
         </section>
