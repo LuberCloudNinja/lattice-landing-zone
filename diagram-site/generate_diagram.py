@@ -716,6 +716,13 @@ def build_agentic_ai_svg() -> str:
     flows.append(orthogonal_path([(tools_x + 180, tools_y + (mem_y + 64 - persona_y)), (vpc_x + 130, agentcore_y + 44)], "north-south", dashed=True, bidirectional=True))
     flows.append(f'<text x="{vpc_x + 20}" y="{agentcore_y - 8}" class="flow-label">same Lambdas registered as real MCP Gateway targets</text>')
 
+    # Right-side bus: every external target's box sits left of trunk_x, so
+    # each stub enters its box from the RIGHT edge, arrowhead pointing left
+    # into the box, instead of the old single diagonal from the tools box
+    # that cut back across the persona/tools boxes to reach a left edge.
+    # The trunk itself is a plain connector (no markers) -- only the stubs
+    # carry arrowheads, one per target, so nothing doubles up visually.
+    trunk_x = w - 40
     ext_x = vpc_x + 1020
     ext_defs = [
         ("Lattice resource gateway", agentcore_y, False),
@@ -726,11 +733,17 @@ def build_agentic_ai_svg() -> str:
     ]
     for label, ey, conditional in ext_defs:
         services.append(service_box(ext_x, ey, 340, 32, label, None, dim=conditional))
-        flows.append(orthogonal_path([(tools_x + 360, tools_y + 20), (ext_x, ey + 16)], "east-west", dashed=conditional, bidirectional=False))
+        flows.append(orthogonal_path([(trunk_x, ey + 16), (ext_x + 340, ey + 16)], "east-west", dashed=conditional, bidirectional=False))
 
     cc_x, cc_y = ext_x, agentcore_y + 200
     services.append(service_box(cc_x, cc_y, 340, 56, "CodeCommit (open a PR)", "codecommit", sub="propose_connectivity -- never a direct mutation"))
-    flows.append(orthogonal_path([(tools_x + 360, tools_y + 20), (cc_x, cc_y + 28)], "east-west", bidirectional=False))
+    flows.append(orthogonal_path([(trunk_x, cc_y + 28), (cc_x + 340, cc_y + 28)], "east-west", bidirectional=False))
+
+    trunk_top_y = tools_y + 20
+    flows.append(
+        f'<path d="M {tools_x + 360} {trunk_top_y} L {trunk_x} {trunk_top_y} L {trunk_x} {cc_y + 28}" '
+        f'class="flow flow-east-west"/>'
+    )
 
     defs = "\n".join(
         f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'

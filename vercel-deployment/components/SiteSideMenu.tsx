@@ -12,7 +12,7 @@ export const siteMenuItems = [
   { label: "Home", href: "/" },
   { label: "The Full Story", href: "/blog/hybrid-cloud-airport-story/" },
   { label: "Ask The Architecture", href: "/#assistant-console" },
-  { label: "Architecture Diagrams", href: "https://ddzmkmn9fdp8y.cloudfront.net", external: true },
+  { label: "Architecture Diagrams", href: "https://github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site", external: true },
   { label: "Project Source", href: "https://github.com/LuberCloudNinja/lattice-landing-zone", external: true },
 ];
 

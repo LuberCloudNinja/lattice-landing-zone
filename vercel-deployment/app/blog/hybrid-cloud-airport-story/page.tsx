@@ -12,12 +12,12 @@ export const metadata: Metadata = {
 };
 
 const GITHUB_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone";
-const DIAGRAM_URL = "https://ddzmkmn9fdp8y.cloudfront.net";
+const DIAGRAM_URL = "https://github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site";
 
 export default function BlogPost() {
   return (
     <SiteFrame
-      eyebrow="Architecture, AWS, CDK, Agentic AI"
+      eyebrow="AWS VPC Lattice, AWS Cloud WAN, Transit Gateway, Direct Connect and VPN, and Agentic AI with Amazon Bedrock, MCP and AgentCore"
       title="The Hybrid Cloud Airport Story"
       subtitle="Every section below is told twice. First in plain English, using an airport as the guide. Then in full technical depth, the way I would explain it to another engineer, with the real diagram for that layer. Read either track on its own, or both."
     >
@@ -78,14 +78,14 @@ export default function BlogPost() {
           <GithubLink href={GITHUB_URL} className="text-[#9fc2ff] no-underline hover:underline">
             github.com/LuberCloudNinja/lattice-landing-zone
           </GithubLink>
-          , and there is also a fully interactive version of the technical diagrams at{" "}
+          , including the full technical diagram source at{" "}
           <a
             href={DIAGRAM_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[#9fc2ff] no-underline hover:underline"
           >
-            ddzmkmn9fdp8y.cloudfront.net
+            diagram-site
           </a>
           .
         </p>
@@ -201,7 +201,7 @@ export default function BlogPost() {
               github.com/LuberCloudNinja/lattice-landing-zone
             </GithubLink>
             <p className="mt-4 mb-2 text-[#d9e5ff]">
-              And the interactive technical reference, built from the same code, with the official AWS
+              And the technical diagram source, built from the same code, with the official AWS
               icon set.
             </p>
             <a
@@ -210,7 +210,7 @@ export default function BlogPost() {
               rel="noopener noreferrer"
               className="font-mono text-[#9fc2ff] font-semibold hover:underline"
             >
-              ddzmkmn9fdp8y.cloudfront.net
+              github.com/LuberCloudNinja/lattice-landing-zone/tree/main/diagram-site
             </a>
           </div>
         </section>
