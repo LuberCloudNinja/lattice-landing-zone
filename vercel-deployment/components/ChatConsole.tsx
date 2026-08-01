@@ -49,7 +49,7 @@ export default function ChatConsole() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/assistant", {
+      const res = await fetch("/api/assistant/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: trimmed, history: messages, conversationId: conversationId() }),

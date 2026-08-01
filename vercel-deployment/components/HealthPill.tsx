@@ -13,7 +13,7 @@ export default function HealthPill() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/health", { cache: "no-store" })
+    fetch("/api/health/", { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
