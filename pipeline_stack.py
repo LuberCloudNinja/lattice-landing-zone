@@ -52,6 +52,12 @@ class PipelineStack(Stack):
                 ],
                 commands=[
                     ". .venv/bin/activate",
+                    # ThreeTierStack's web tier deploys app/frontend-next's
+                    # static export (Next.js `output: 'export'`) -- built
+                    # here, before synth, so Source.asset() finds real files
+                    # at synth time. Node/npm ship on the standard CodeBuild
+                    # image already (cdk itself needs it), no extra install.
+                    "cd app/frontend-next && npm ci && npm run build && cd ../..",
                     "npx cdk synth",
                 ],
                 # TEMPORARY, deliberately -- Cloud WAN's core network +

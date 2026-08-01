@@ -18,6 +18,8 @@ from constructs import Construct
 import config
 from stacks.agentic_ai_stack import AgenticAiStack
 from stacks.auto_heal_stack import AutoHealStack
+from stacks.blog_analytics_stack import BlogAnalyticsStack
+from stacks.blog_assistant_stack import BlogAssistantStack
 from stacks.cloudwan_stack import CloudWanStack
 from stacks.diagram_stack import DiagramStack
 from stacks.drift_remediation_stack import DriftRemediationStack
@@ -82,6 +84,27 @@ class LandingZoneStage(Stage):
             self, "ObservabilityStack",
             network=network, inspection=inspection, privatelink=privatelink, threetier=threetier, lattice=lattice,
             governance=governance, drift_remediation=drift_remediation, security=security,
+        )
+
+        # Blog read-analytics -- deployed unconditionally (lab-scale cost),
+        # after ThreeTierStack (adds a CloudFront behavior onto its existing
+        # distribution) and ObservabilityStack (adds widgets onto its
+        # existing dashboard) both already exist.
+        BlogAnalyticsStack(
+            self, "BlogAnalyticsStack",
+            security=security, threetier=threetier, observability=observability,
+        )
+
+        # Blog chat assistant -- deployed unconditionally, same reasoning
+        # as BlogAnalyticsStack: this is what makes the always-on blog's
+        # Assistant Console section work with no feature flag required.
+        # Also adds a CloudFront behavior onto ThreeTierStack's existing
+        # distribution, after BlogAnalyticsStack's own behavior so the two
+        # additional_behaviors entries don't race each other's synth-time
+        # mutation of the same L2 Distribution construct.
+        BlogAssistantStack(
+            self, "BlogAssistantStack",
+            security=security, threetier=threetier,
         )
 
         if config.ENABLE_KAFKA:

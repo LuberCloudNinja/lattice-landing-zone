@@ -383,13 +383,68 @@ denied by design. Expect 403 without SigV4, 200 with it.
 
 **Architecture diagram** -- `open <DiagramUrl>` (`DiagramStack` output). To
 update the diagram after changing the architecture: edit
-`diagram-site/generate_diagram.py`, re-run it, then redeploy `DiagramStack`.
-The page now has five diagrams: the original inspection-flow one, a
-governance/drift-remediation flow (including the auto-heal loop), the
-multi-region Cloud WAN layer, the Agentic AI layer, and the SageMaker
-anomaly-detection layer -- the last four are all present regardless of
-which feature flags are on (the diagram documents the whole architecture,
-not just what's currently deployed).
+`diagram-site/generate_diagram.py`, re-run it (`python3 generate_diagram.py`
+from `diagram-site/`), then redeploy `DiagramStack`.
+
+The page has ten panels: Core Network & Traffic Inspection (including the
+simulated on-prem + Site-to-Site VPN path), Application Path (PrivateLink +
+Three-Tier), Blog Read Analytics, Blog Chat Assistant, VPC Lattice Service
+Network, Security & Governance (SecurityStack's CMKs/permissions boundary +
+CloudTrail/Config/SecurityHub/GuardDuty + drift-remediation + the auto-heal
+loop), the CI/CD pipeline itself, the multi-region Cloud WAN layer, the
+Agentic AI layer, and the SageMaker anomaly-detection layer -- Cloud
+WAN/Agentic AI/SageMaker are all present regardless of which feature flags
+are on (the diagram documents the whole architecture, not just what's
+currently deployed).
+
+Every node uses a real AWS service icon: the official AWS Architecture
+Icons where one exists in the source set (`diagram-site/aws_icons.py`,
+sourced from AWS's own released icon set), and a hand-built icon in the
+identical visual language (same category gradient colors) for services
+that set does not ship -- Transit Gateway, VPC Lattice, Bedrock, SageMaker,
+GuardDuty, Security Hub, and a handful of others. No Application Composer,
+no external icon CDN -- every icon is inlined SVG, so this strict-CSP page
+(`script-src 'none'`) makes zero external requests.
+
+**Three-tier web app / portfolio site** -- `open <WebDistributionUrl>`
+(`ThreeTierStack` output). `app/frontend-next` is a real Next.js 15 +
+Tailwind app (static export, `output: 'export'` -- built by the pipeline's
+Synth step before `cdk synth` runs, see `pipeline_stack.py`), replacing the
+placeholder that shipped before `config.WEBAPP_SOURCE` was set. It's the
+author's own portfolio home page plus `/blog/hybrid-cloud-airport-story`,
+told two ways at once: a plain-English airport analogy and a deep technical
+breakdown, section by section, each with its own diagram (both a simple
+airport illustration and the real AWS-icon technical diagram). The layout
+(cosmic dark theme, glass panels, fixed sidebar menu) deliberately mirrors
+the author's other portfolio project. See `blog-hybrid-cloud-airport-story/
+POST.md` at the repo root for the GitHub-readable version of the same post,
+and `blog-hybrid-cloud-airport-story/generate_illustrations.py` /
+`diagram-site/generate_diagram.py`'s `write_standalone_panel_svgs()` for how
+both sets of diagrams get built.
+
+**Blog analytics** -- `blog_analytics_stack.py` (API Gateway + Lambda +
+DynamoDB, reached at `/analytics/*` on the same CloudFront distribution)
+tracks page views, read-completion (95% scroll), GitHub-link click-throughs,
+and per-session time-on-page/max-scroll, with country derived from
+CloudFront's own `CloudFront-Viewer-Country` header. Raw per-visitor events
+(including source IP) are TTL'd at 180 days; aggregate counts are published
+to CloudWatch and graphed on the same `lattice-lab` dashboard as every other
+layer. Because this stores source IP and browsing behavior, the site should
+carry a short privacy notice if it draws EU/UK traffic -- see
+`blog_analytics_stack.py`'s module docstring.
+
+**Blog chat assistant** -- `blog_assistant_stack.py` (API Gateway + Lambda,
+reached at `/assistant/*` on the same distribution) answers visitor
+questions about this project using retrieval-augmented generation: a
+Bedrock Knowledge Base backed by an S3 Vectors index (same construct
+pattern as `agentic_ai_stack.py`'s semantic memory tier, standing on its
+own and deployed unconditionally rather than gated behind `ENABLE_AI`)
+retrieves grounded passages from this project's own blog content, Amazon
+Bedrock's Claude model (`config.BEDROCK_MODEL_ID`) generates the answer via
+the Converse API, and a plain S3 bucket holds one JSON conversation history
+per conversation id (30-day lifecycle rule). The chat widget lives at
+`app/frontend-next/components/ChatConsole.tsx`, mounted on the home page's
+Assistant Console section.
 
 **Security + Governance** -- confirm the recording plane is actually
 recording:

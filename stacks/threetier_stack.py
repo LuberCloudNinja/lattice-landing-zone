@@ -2,11 +2,15 @@
 
 See SPEC.md Section 6 ("threetier_stack.py (three-tier web app)").
 
-config.WEBAPP_SOURCE has not been set yet (still "REPLACE_ME_WEBAPP_SOURCE"
-per SPEC.md Section 0), so this stack deploys the placeholder app in app/
-(app/frontend/index.html, app/backend/app.py) instead -- clearly labeled as
-such in both. Swap app/backend/ for the real app (keep its Dockerfile, or
-replace it) and re-deploy this stack once WEBAPP_SOURCE is provided.
+config.WEBAPP_SOURCE has not been set (still "REPLACE_ME_WEBAPP_SOURCE" per
+SPEC.md Section 0) -- the app tier (app/backend/app.py) is still the
+stdlib-only placeholder backend. The web tier is no longer a placeholder,
+though: app/frontend-next is a real Next.js + Tailwind app (static export,
+`output: 'export'` -- see its next.config.js), built by the pipeline's Synth
+step (pipeline_stack.py) before `cdk synth` runs, so Source.asset() below
+finds real files. Swap app/backend/ for the real app tier (keep its
+Dockerfile, or replace it) once WEBAPP_SOURCE is provided; the web tier
+already ships the author's own portfolio site + blog.
 
 App tier runs on ECS Fargate (smallest task size, 0.25 vCPU/0.5GB) rather
 than an EC2 ASG -- Fargate draws from its own separate vCPU quota pool
@@ -313,11 +317,36 @@ class ThreeTierStack(Stack):
         )
         s3_deploy.BucketDeployment(
             self, "WebDeployment",
-            sources=[s3_deploy.Source.asset(str(APP_DIR / "frontend"))],
+            sources=[s3_deploy.Source.asset(str(APP_DIR / "frontend-next" / "out"))],
             destination_bucket=web_bucket,
         )
 
         alb_vpc_origin = origins.VpcOrigin.with_application_load_balancer(self.alb, http_port=80)
+
+        # Next.js static export writes one directory per route (e.g.
+        # blog/hybrid-cloud-airport-story/index.html) with trailingSlash
+        # enabled. default_root_object only rewrites the bare "/" -- a
+        # private S3 origin behind OAC (not S3 website-hosting mode, which
+        # would require public access) does NOT auto-append index.html to
+        # subdirectory requests the way an S3 website endpoint would. This
+        # CloudFront Function does that rewrite at the edge instead --
+        # free-tier eligible, no Lambda@Edge needed.
+        url_rewrite_fn = cloudfront.Function(
+            self, "NextStaticUrlRewrite",
+            code=cloudfront.FunctionCode.from_inline(
+                "function handler(event) {\n"
+                "  var request = event.request;\n"
+                "  var uri = request.uri;\n"
+                "  if (uri.endsWith('/')) {\n"
+                "    request.uri += 'index.html';\n"
+                "  } else if (!uri.includes('.')) {\n"
+                "    request.uri += '/index.html';\n"
+                "  }\n"
+                "  return request;\n"
+                "}"
+            ),
+            runtime=cloudfront.FunctionRuntime.JS_2_0,
+        )
 
         self.distribution = cloudfront.Distribution(
             self, "WebDistribution",
@@ -326,6 +355,9 @@ class ThreeTierStack(Stack):
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.S3BucketOrigin.with_origin_access_control(web_bucket),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                function_associations=[cloudfront.FunctionAssociation(
+                    function=url_rewrite_fn, event_type=cloudfront.FunctionEventType.VIEWER_REQUEST,
+                )],
             ),
             additional_behaviors={
                 "/api/*": cloudfront.BehaviorOptions(

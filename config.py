@@ -163,6 +163,8 @@ class Layer:
     REGION2 = "region2"
     AI = "ai"
     SAGEMAKER = "sagemaker"
+    BLOG_ANALYTICS = "blog-analytics"
+    BLOG_ASSISTANT = "blog-assistant"
 
 
 ALL_LAYERS = [
@@ -182,4 +184,6 @@ ALL_LAYERS = [
     Layer.REGION2,
     Layer.AI,
     Layer.SAGEMAKER,
+    Layer.BLOG_ANALYTICS,
+    Layer.BLOG_ASSISTANT,
 ]
