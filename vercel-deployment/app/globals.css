@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --twin-bg: #020617;
+  --twin-text: #eef1f6;
+  --twin-muted: #8a97b3;
+  --twin-accent: #5b9dff;
+  --twin-accent-2: #7c6cf0;
+  --twin-accent-soft: #5b9dff22;
+  --twin-accent-warm: #f2a93b;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff1a transparent;
+}
+*::-webkit-scrollbar { width: 6px; }
+*::-webkit-scrollbar-thumb { background: #ffffff1a; border-radius: 999px; }
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--twin-bg);
+  color: var(--twin-text);
+}
+
+.text-contrast-shield {
+  text-shadow:
+    0 1px 2px #020617,
+    0 2px 6px rgba(2, 6, 23, 0.95),
+    0 4px 16px rgba(2, 6, 23, 0.85);
+}
+
+.scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03) 0px,
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+.holo-text {
+  background: linear-gradient(90deg, var(--twin-text), var(--twin-accent), var(--twin-accent-2), var(--twin-text));
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: holo-shift 6s ease-in-out infinite;
+}
+@keyframes holo-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.glow-pulse { animation: glow-pulse 2.4s ease-in-out infinite; }
+
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-6px); }
+}
+.animate-bounce-dot { animation: bounce-dot 1.4s infinite; }
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+
+@keyframes focus-ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--twin-accent-soft), 0 0 16px 2px rgba(91, 157, 255, 0.25); }
+  50% { box-shadow: 0 0 0 3px var(--twin-accent-soft), 0 0 26px 6px rgba(91, 157, 255, 0.4); }
+}
+.input-focus-glow:focus {
+  animation: focus-ring-pulse 1.8s ease-in-out infinite;
+  border-color: var(--twin-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-text, .glow-pulse, .animate-bounce-dot, .input-focus-glow:focus {
+    animation: none;
+  }
+}
