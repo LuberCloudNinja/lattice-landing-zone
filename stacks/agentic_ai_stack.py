@@ -517,7 +517,10 @@ class AgenticAiStack(Stack):
             self, "AgentCoreMemoryRolePolicy",
             roles=[memory_role],
             statements=[iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+                actions=["bedrock:InvokeModel"], resources=[
+                    f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{config.BEDROCK_MODEL_ID}",
+                    f"arn:aws:bedrock:*::foundation-model/{config.BEDROCK_BASE_MODEL_ID}",
+                ],
             )],
         )
 
@@ -589,7 +592,10 @@ class AgenticAiStack(Stack):
                 managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaVPCAccessExecutionRole")],
             )
             orch_role.add_to_policy(iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+                actions=["bedrock:InvokeModel"], resources=[
+                    f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{config.BEDROCK_MODEL_ID}",
+                    f"arn:aws:bedrock:*::foundation-model/{config.BEDROCK_BASE_MODEL_ID}",
+                ],
             ))
             self.working_memory_table.grant_read_write_data(orch_role)
             self.durable_memory_bucket.grant_read_write(orch_role)
@@ -653,7 +659,10 @@ class AgenticAiStack(Stack):
                 roles=[runtime_role],
                 statements=[
                     iam.PolicyStatement(
-                        actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+                        actions=["bedrock:InvokeModel"], resources=[
+                    f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{config.BEDROCK_MODEL_ID}",
+                    f"arn:aws:bedrock:*::foundation-model/{config.BEDROCK_BASE_MODEL_ID}",
+                ],
                     ),
                     iam.PolicyStatement(
                         actions=["s3:GetObject"],

@@ -1,6 +1,10 @@
-"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (ALB+Fargate) -> data tier (DynamoDB).
+"""threetier_stack.py -- web tier (CloudFront+S3) -> app tier (Lambda) -> data tier (DynamoDB).
 
-See SPEC.md Section 6 ("threetier_stack.py (three-tier web app)").
+See SPEC.md Section 6 ("threetier_stack.py (three-tier web app)"). SPEC.md's
+original text describes an ALB + Auto Scaling app tier; this stack has since
+moved twice -- first to ECS Fargate, now to a fully serverless app tier with
+no load balancer and no always-on compute at all. Documented here rather
+than in SPEC.md itself, the same way the earlier Fargate move was.
 
 config.WEBAPP_SOURCE has not been set (still "REPLACE_ME_WEBAPP_SOURCE" per
 SPEC.md Section 0) -- the app tier (app/backend/app.py) is still the
@@ -12,27 +16,43 @@ finds real files. Swap app/backend/ for the real app tier (keep its
 Dockerfile, or replace it) once WEBAPP_SOURCE is provided; the web tier
 already ships the author's own portfolio site + blog.
 
-App tier runs on ECS Fargate (smallest task size, 0.25 vCPU/0.5GB) rather
-than an EC2 ASG -- Fargate draws from its own separate vCPU quota pool
-(distinct from the EC2 "Standard" instance-family quota the rest of this
-project's EC2 fleet shares), and needs no host patching. One consequence:
-VPC Lattice's INSTANCE-type target groups (lattice_stack.py L4a/L4c)
-register real EC2 instance IDs, which Fargate tasks fundamentally can't be
--- see LatticeInstanceTargetHost below for how that's preserved without
-putting the real app-tier workload back on EC2.
+App tier compute: a single Lambda function running app/backend/'s container
+image, fronted by API Gateway HTTP API, reached from CloudFront at /api/*.
+No ALB, no ECS cluster, no Auto Scaling group, no idle compute cost -- the
+function only runs (and is only billed) while handling a request. The
+container image is unchanged from the ECS-Fargate version of this stack;
+what changed is the Dockerfile, which now layers in the AWS Lambda Web
+Adapter (a Lambda extension, not an app code change) so app.py keeps
+running as a plain http.server process instead of being rewritten into a
+handler(event, context) function. Same image, same app.py, different
+compute target.
+
+One consequence of dropping the ALB from the live traffic path: VPC
+Lattice's ALB-type target group (lattice_stack.py L4b) needs a real ALB to
+point at, and Lattice's INSTANCE-type target groups (L4a/L4c) need a real
+EC2 instance id, neither of which a Lambda function can be. Both are kept
+alive as small, clearly-separated demo-only resources below
+(LatticeInstanceTargetHost + a minimal internal ALB in front of it) --
+exactly the same "this exists only to keep one Lattice target-group type
+demonstrable, it is not the real workload" pattern this file already used
+for LatticeInstanceTargetHost before this change, just now extended to
+cover the ALB type too.
 """
 
 from pathlib import Path
 
 import aws_cdk as cdk
 from aws_cdk import CfnOutput, Duration, Stack, Tags
+from aws_cdk import aws_apigatewayv2 as apigwv2
+from aws_cdk import aws_apigatewayv2_integrations as apigwv2_integrations
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
-from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
+from aws_cdk import aws_elasticloadbalancingv2_targets as elbv2_targets
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_deployment as s3_deploy
@@ -57,157 +77,17 @@ class ThreeTierStack(Stack):
         vpc = network.app_vpc
 
         # ------------------------------------------------------------------
-        # App tier: internal ALB -> ASG. Built before the web tier below
-        # since CloudFront's VPC origin needs a real ALB to point at.
-        # Deliberately public (self.alb / self.app_target_group), not local
-        # -- LatticeStack (L4b) reuses this exact ALB as a Lattice target
-        # group per SPEC.md Section 6's own note.
-        # ------------------------------------------------------------------
-        alb_sg = ec2.SecurityGroup(
-            self, "AppAlbSg",
-            vpc=vpc,
-            description="Internal app-tier ALB -- inbound only from inside app-vpc (CloudFront VPC origin traffic enters via the VPC, not the public internet)",
-            allow_all_outbound=True,
-        )
-        alb_sg.add_ingress_rule(ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(APP_TIER_PORT), "app-vpc")
-
-        app_sg = ec2.SecurityGroup(
-            self, "AppInstanceSg",
-            vpc=vpc,
-            description="App-tier ASG instances -- inbound from the ALB only",
-            allow_all_outbound=True,
-        )
-        app_sg.add_ingress_rule(alb_sg, ec2.Port.tcp(APP_TIER_PORT), "from AppAlbSg")
-
-        self.alb = elbv2.ApplicationLoadBalancer(
-            self, "AppAlb",
-            vpc=vpc,
-            internet_facing=False,
-            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            security_group=alb_sg,
-        )
-
-        self.app_target_group = elbv2.ApplicationTargetGroup(
-            self, "AppTargetGroup",
-            vpc=vpc,
-            port=APP_TIER_PORT,
-            protocol=elbv2.ApplicationProtocol.HTTP,
-            # IP, not INSTANCE -- Fargate's awsvpc networking mode requires
-            # IP-type ALB target groups (there's no host instance to
-            # register by id).
-            target_type=elbv2.TargetType.IP,
-            health_check=elbv2.HealthCheck(path="/api/health", healthy_threshold_count=2, unhealthy_threshold_count=3),
-        )
-        # Exposed publicly (not local) -- lattice_stack.py's L4b ALB-type
-        # target group registers this exact listener's ARN as its target.
-        self.app_listener = self.alb.add_listener(
-            "AppListener",
-            port=80,
-            default_action=elbv2.ListenerAction.forward([self.app_target_group]),
-        )
-
-        # ------------------------------------------------------------------
-        # VPC endpoints Fargate needs to even START in app-vpc. app-vpc's
-        # Private subnets DO have a real internet path (NAT Gateway, routed
-        # through inspection first) unlike provider-vpc's -- so this looked
-        # unnecessary at first. It wasn't: confirmed the hard way (same
-        # failure as privatelink_stack.py's provider task) that the
-        # inspection-routed NAT path isn't reliable/fast enough for the ECR
-        # auth handshake -- "unable to pull registry auth ... dial tcp
-        # ...:443: i/o timeout" on every attempt. Same fix, same reasoning
-        # as privatelink_stack.py's ProviderEcrEndpoint etc.
-        # ------------------------------------------------------------------
-        app_vpc_endpoint_sg = ec2.SecurityGroup(
-            self, "AppVpcEndpointSg",
-            vpc=vpc,
-            description="Interface endpoints (ECR/Logs) for the Fargate app tier -- inbound from app-vpc only",
-            allow_all_outbound=True,
-        )
-        app_vpc_endpoint_sg.add_ingress_rule(
-            ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(443), "app-vpc"
-        )
-        for service_id, service in {
-            "Ecr": ec2.InterfaceVpcEndpointAwsService.ECR,
-            "EcrDocker": ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
-            "Logs": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-        }.items():
-            ec2.InterfaceVpcEndpoint(
-                self, f"App{service_id}Endpoint",
-                vpc=vpc,
-                service=service,
-                subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-                security_groups=[app_vpc_endpoint_sg],
-            )
-        ec2.GatewayVpcEndpoint(
-            self, "AppS3Endpoint",
-            vpc=vpc,
-            service=ec2.GatewayVpcEndpointAwsService.S3,
-            subnets=[ec2.SubnetSelection(subnet_group_name="Private")],
-        )
-
-        # ------------------------------------------------------------------
-        # App tier compute: ECS Fargate, smallest task size. from_asset()
-        # builds app/backend/'s Dockerfile and pushes it to a CDK-managed
-        # ECR asset repo at deploy time -- CDK Pipelines automatically runs
-        # that publish step in a privileged (Docker-capable) CodeBuild
-        # project, no manual configuration needed.
-        # ------------------------------------------------------------------
-        app_cluster = ecs.Cluster(
-            self, "AppCluster", vpc=vpc, container_insights_v2=ecs.ContainerInsights.DISABLED
-        )
-
-        app_task_definition = ecs.FargateTaskDefinition(
-            self, "AppTaskDefinition",
-            cpu=256,
-            memory_limit_mib=512,
-        )
-        app_log_group = logs.LogGroup(
-            self, "AppLogGroup",
-            retention=logs.RetentionDays.ONE_WEEK,
-            encryption_key=security.logs_key,
-            removal_policy=cdk.RemovalPolicy.DESTROY,
-        )
-        app_task_definition.add_container(
-            "AppContainer",
-            image=ecs.ContainerImage.from_asset(str(APP_DIR / "backend")),
-            port_mappings=[ecs.PortMapping(container_port=APP_TIER_PORT)],
-            environment={"PORT": str(APP_TIER_PORT)},
-            logging=ecs.LogDrivers.aws_logs(stream_prefix="app-tier", log_group=app_log_group),
-        )
-
-        self.app_service = ecs.FargateService(
-            self, "AppService",
-            cluster=app_cluster,
-            task_definition=app_task_definition,
-            desired_count=2 if config.MULTI_AZ else 1,
-            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
-            security_groups=[app_sg],
-            # ECS Exec -- interactive debug access, the Fargate equivalent
-            # of ssm_session_permissions=True on the EC2 instances elsewhere
-            # in this project.
-            enable_execute_command=True,
-            circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
-            # Fine for a lab at desired_count=1 to go briefly to 0 during a
-            # deploy; explicit rather than relying on the (identical) default
-            # so the CLI doesn't flag it as unconfigured.
-            min_healthy_percent=0,
-            max_healthy_percent=200,
-        )
-        self.app_service.attach_to_application_target_group(self.app_target_group)
-
-        # ------------------------------------------------------------------
-        # Dedicated small EC2 instance -- exists ONLY because VPC Lattice's
-        # INSTANCE-type target groups (lattice_stack.py L4a/L4c) register
-        # real EC2 instance IDs, and Fargate tasks cannot be INSTANCE-type
-        # targets (no such registration path exists in the Lattice API).
-        # NOT part of the ALB/CloudFront traffic path -- the app tier above
-        # is the real workload; this just keeps that one Lattice feature
-        # demonstrable now that the real workload no longer runs on EC2.
+        # Lattice INSTANCE/IP-target-group demo host. Not part of the real
+        # app-tier traffic path (that's the Lambda below) -- exists only
+        # because VPC Lattice's INSTANCE-type target groups (lattice_stack.py
+        # L4a/L4c) register real EC2 instance IDs, which a Lambda function
+        # fundamentally can't be. Runs the exact same app/backend/app.py as
+        # the real app tier, as a plain systemd service.
         # ------------------------------------------------------------------
         lattice_target_sg = ec2.SecurityGroup(
             self, "LatticeInstanceTargetSg",
             vpc=vpc,
-            description="Dedicated Lattice INSTANCE-target-group demo host -- inbound from app-vpc only",
+            description="Dedicated Lattice target-group demo host -- inbound from app-vpc only",
             allow_all_outbound=True,
         )
         lattice_target_sg.add_ingress_rule(
@@ -230,7 +110,7 @@ class ThreeTierStack(Stack):
             f"cat > /opt/app/app.py << 'PYEOF'\n{(APP_DIR / 'backend' / 'app.py').read_text()}PYEOF",
             "cat > /etc/systemd/system/app-backend.service << 'EOF'\n"
             "[Unit]\n"
-            "Description=Lattice INSTANCE-target-group demo backend\n"
+            "Description=Lattice target-group demo backend\n"
             "After=network.target\n"
             "[Service]\n"
             f"Environment=PORT={APP_TIER_PORT}\n"
@@ -262,9 +142,50 @@ class ThreeTierStack(Stack):
         )
 
         # ------------------------------------------------------------------
+        # Minimal internal ALB, demo-only, same reasoning as the instance
+        # above: VPC Lattice's ALB-type target group (lattice_stack.py L4b)
+        # needs a real ALB to point at. Forwards to the same demo host,
+        # exactly like ip_target_group in lattice_stack.py already reaches
+        # that same instance by a different address -- one small backend,
+        # every Lattice target-group type demonstrated against it.
+        # ------------------------------------------------------------------
+        alb_sg = ec2.SecurityGroup(
+            self, "AppAlbSg",
+            vpc=vpc,
+            description="Lattice ALB-target-group demo -- inbound only from inside app-vpc (Lattice association traffic, not the public internet)",
+            allow_all_outbound=True,
+        )
+        alb_sg.add_ingress_rule(ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(80), "app-vpc (Lattice association traffic)")
+        lattice_target_sg.add_ingress_rule(alb_sg, ec2.Port.tcp(APP_TIER_PORT), "from AppAlbSg")
+
+        self.alb = elbv2.ApplicationLoadBalancer(
+            self, "AppAlb",
+            vpc=vpc,
+            internet_facing=False,
+            vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
+            security_group=alb_sg,
+        )
+        self.app_target_group = elbv2.ApplicationTargetGroup(
+            self, "AppTargetGroup",
+            vpc=vpc,
+            port=APP_TIER_PORT,
+            protocol=elbv2.ApplicationProtocol.HTTP,
+            target_type=elbv2.TargetType.INSTANCE,
+            targets=[elbv2_targets.InstanceIdTarget(self.lattice_instance_target_host.instance_id, port=APP_TIER_PORT)],
+            health_check=elbv2.HealthCheck(path="/api/health", healthy_threshold_count=2, unhealthy_threshold_count=3),
+        )
+        # Exposed publicly (not local) -- lattice_stack.py's L4b ALB-type
+        # target group registers this exact listener's ARN as its target.
+        self.app_listener = self.alb.add_listener(
+            "AppListener",
+            port=80,
+            default_action=elbv2.ListenerAction.forward([self.app_target_group]),
+        )
+
+        # ------------------------------------------------------------------
         # Data tier: DynamoDB -- on-demand billing (true scale-to-zero, no
         # idle cost, no capacity planning), reachable only via the app
-        # task's own IAM role (not a network-level control the way RDS's
+        # Lambda's own IAM role (not a network-level control the way RDS's
         # security group was -- DynamoDB is an AWS-managed API endpoint,
         # not something with a listening port/SG of its own). Access is
         # scoped by IAM grant, not network reachability, which is the
@@ -281,26 +202,69 @@ class ThreeTierStack(Stack):
             ),
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
-        self.database.grant_read_write_data(app_task_definition.task_role)
 
-        # DynamoDB Gateway VPC Endpoint -- same lesson as the ECR/S3/Logs
-        # interface endpoints above: don't assume the NAT-via-inspection
-        # path reaches every AWS service reliably, verify or route around
-        # it. Gateway endpoints (unlike interface ones) are free.
-        ec2.GatewayVpcEndpoint(
-            self, "AppDynamoDbEndpoint",
-            vpc=vpc,
-            service=ec2.GatewayVpcEndpointAwsService.DYNAMODB,
-            subnets=[ec2.SubnetSelection(subnet_group_name="Private")],
+        # ------------------------------------------------------------------
+        # App tier compute: one Lambda function, the app/backend/ container
+        # image (see that Dockerfile's AWS Lambda Web Adapter layer). Not
+        # VPC-attached -- its only AWS dependency is DynamoDB, reached over
+        # the same public, TLS-encrypted, IAM-authenticated API endpoint
+        # every Lambda in this project already calls Bedrock/S3/DynamoDB
+        # through (blog_assistant_stack.py, blog_analytics_stack.py), so
+        # there's no VPC ENI cold-start cost and no interface endpoints to
+        # provision just for this function to start.
+        # ------------------------------------------------------------------
+        app_role = iam.Role(
+            self, "AppFunctionRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
+            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")],
+        )
+        self.database.grant_read_write_data(app_role)
+
+        app_log_group = logs.LogGroup(
+            self, "AppLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+            encryption_key=security.logs_key,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+        self.app_function = lambda_.DockerImageFunction(
+            self, "AppFunction",
+            function_name="threetier-app",
+            description="App tier -- app/backend/'s container image, run on Lambda via the AWS Lambda Web Adapter.",
+            code=lambda_.DockerImageCode.from_image_asset(str(APP_DIR / "backend")),
+            architecture=lambda_.Architecture.X86_64,
+            memory_size=512,
+            # API Gateway HTTP API's own integration timeout caps at 29s --
+            # no point configuring the function itself any higher.
+            timeout=Duration.seconds(29),
+            role=app_role,
+            log_group=app_log_group,
+            environment={"PORT": str(APP_TIER_PORT), "AWS_LWA_PORT": str(APP_TIER_PORT)},
+        )
+
+        # ------------------------------------------------------------------
+        # API Gateway HTTP API -- same shape as blog_assistant_stack.py /
+        # blog_analytics_stack.py's Lambda-behind-CloudFront routes, just
+        # owned directly by this stack since it already owns the
+        # distribution. Route path is the FULL path CloudFront forwards
+        # (see the /api/* behavior below) -- CloudFront does not strip the
+        # matched behavior's own prefix before forwarding to the origin.
+        # ------------------------------------------------------------------
+        self.http_api = apigwv2.HttpApi(
+            self, "AppApi",
+            api_name="threetier-app-api",
+        )
+        self.http_api.add_routes(
+            path="/api/{proxy+}",
+            methods=[apigwv2.HttpMethod.ANY],
+            integration=apigwv2_integrations.HttpLambdaIntegration("AppIntegration", self.app_function),
         )
 
         # ------------------------------------------------------------------
         # Web tier: private S3 (OAC) for the static frontend, CloudFront in
-        # front with two behaviors -- default -> S3, /api/* -> the internal
-        # ALB above via a CloudFront VPC origin (no public ALB needed; this
-        # is the trade-off SPEC.md Section 6 asked to document -- see this
-        # file's module docstring / README.md for the public-ALB fallback
-        # this project deliberately did NOT take).
+        # front with two behaviors -- default -> S3, /api/* -> the API
+        # Gateway HTTP API above (a plain HttpOrigin -- no VPC origin, no
+        # ALB in the live traffic path at all now).
         # ------------------------------------------------------------------
         web_bucket = s3.Bucket(
             self, "WebBucket",
@@ -321,7 +285,11 @@ class ThreeTierStack(Stack):
             destination_bucket=web_bucket,
         )
 
-        alb_vpc_origin = origins.VpcOrigin.with_application_load_balancer(self.alb, http_port=80)
+        api_domain = cdk.Fn.select(2, cdk.Fn.split("/", self.http_api.api_endpoint))
+        app_api_origin = origins.HttpOrigin(
+            api_domain,
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        )
 
         # Next.js static export writes one directory per route (e.g.
         # blog/hybrid-cloud-airport-story/index.html) with trailingSlash
@@ -361,7 +329,7 @@ class ThreeTierStack(Stack):
             ),
             additional_behaviors={
                 "/api/*": cloudfront.BehaviorOptions(
-                    origin=alb_vpc_origin,
+                    origin=app_api_origin,
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
                     cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
@@ -371,6 +339,7 @@ class ThreeTierStack(Stack):
         )
 
         CfnOutput(self, "WebDistributionUrl", value=f"https://{self.distribution.distribution_domain_name}")
+        CfnOutput(self, "AppApiEndpoint", value=self.http_api.api_endpoint)
         CfnOutput(self, "AppAlbDnsName", value=self.alb.load_balancer_dns_name)
         CfnOutput(self, "DatabaseTableName", value=self.database.table_name)
         CfnOutput(self, "LatticeInstanceTargetHostId", value=self.lattice_instance_target_host.instance_id)
@@ -382,26 +351,18 @@ class ThreeTierStack(Stack):
             NagPackSuppression(
                 id="AwsSolutions-IAM4",
                 reason="AmazonSSMManagedInstanceCore (LatticeInstanceTargetHost's EC2 role) and "
-                       "AmazonECSTaskExecutionRolePolicy (the Fargate app tier's execution role, CDK's "
-                       "own standard image-pull/log-write policy) are both AWS-curated, not "
-                       "hand-widened.",
+                       "service-role/AWSLambdaBasicExecutionRole (the app tier Lambda's role) are both "
+                       "AWS-curated, not hand-widened.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-IAM5",
-                reason="Wildcards come from CDK's own grant_read()/BucketDeployment-generated policies, "
-                       "the DynamoDB table's grant_read_write_data()-generated policy, the Fargate task "
-                       "definition's framework-generated execution role policy, and ECS Exec's SSM "
-                       "channel permissions -- none hand-widened.",
+                reason="Wildcards come from CDK's own grant_read_write_data()/BucketDeployment-generated "
+                       "policies -- none hand-widened.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-L1",
                 reason="Flagged Lambda is BucketDeployment's own framework-managed provider function, "
                        "not project-authored code.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-ECS4",
-                reason="Container Insights is extra CloudWatch cost with no security value for a lab "
-                       "meant to be built and torn down repeatedly.",
             ),
             NagPackSuppression(
                 id="AwsSolutions-S1",
@@ -432,13 +393,8 @@ class ThreeTierStack(Stack):
             NagPackSuppression(
                 id="AwsSolutions-ELB2",
                 reason="ALB access logging needs a dedicated log bucket -- not worth the added "
-                       "infrastructure for a lab's internal ALB.",
-            ),
-            NagPackSuppression(
-                id="AwsSolutions-ECS2",
-                reason="The only 'environment variable' is PORT=8080, a fixed, non-sensitive listen "
-                       "port -- not the kind of value AwsSolutions-ECS2 exists to catch (secrets/config "
-                       "that belong in Secrets Manager or SSM Parameter Store instead).",
+                       "infrastructure for this lab's small, demo-only internal ALB (Lattice ALB-target-"
+                       "group type demonstration, not the live app-tier traffic path).",
             ),
             NagPackSuppression(
                 id="AwsSolutions-EC28",
@@ -449,6 +405,17 @@ class ThreeTierStack(Stack):
                 id="AwsSolutions-EC29",
                 reason="Termination protection would directly conflict with SPEC.md's `cdk destroy "
                        "--all` teardown requirement (LatticeInstanceTargetHost).",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-APIG1",
+                reason="Access logging on this single-integration proxy API would duplicate what the "
+                       "Lambda's own CloudWatch Logs already capture for a lab-scale app tier.",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-APIG4",
+                reason="This endpoint is only ever reached same-origin through CloudFront's /api/* "
+                       "behavior -- there is no per-visitor identity to authorize against for a "
+                       "placeholder app-tier backend.",
             ),
         ])
         NagSuppressions.add_resource_suppressions(

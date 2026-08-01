@@ -4,16 +4,17 @@ Grouped with `# ---- L4a ----` etc. comments matching SPEC.md Section 5's
 subsections. A few implementation notes that apply across the whole file:
 
   - INSTANCE-type target groups register EC2 *instance IDs* directly --
-    Fargate tasks (threetier_stack.py's real app-tier workload, moved off
-    EC2 for cost/HA) fundamentally cannot fill this role, so this stack
-    targets threetier.lattice_instance_target_host instead -- a small
-    dedicated EC2 instance that exists specifically to keep the
-    INSTANCE-type (and, reusing the same host, IP-type) target-group
-    demos real and working. Its id/private IP are plain CDK attributes on
-    an ec2.Instance construct, so no AwsCustomResource lookup is needed
-    here (unlike the ASG-backed approach this replaced, which had to poll
-    DescribeAutoScalingGroups/DescribeInstances for a point-in-time
-    snapshot of the ASG's current instance).
+    threetier_stack.py's real app-tier workload runs on Lambda now (no ALB,
+    no EC2, no idle compute at all), which fundamentally cannot fill this
+    role, so this stack targets threetier.lattice_instance_target_host
+    instead -- a small dedicated EC2 instance that exists specifically to
+    keep the INSTANCE-type (and, reusing the same host, IP-type and
+    ALB-type) target-group demos real and working. Its id/private IP are
+    plain CDK attributes on an ec2.Instance construct, so no
+    AwsCustomResource lookup is needed here. threetier_stack.py's own ALB
+    (self.alb below) is the same kind of demo-only resource -- kept alive
+    purely so this file's L4b ALB-type target group has a real ALB to
+    point at, not part of the live app-tier traffic path.
   - L4c's HTTPS listener needs a certificate, and this lab has no real
     domain to validate a public ACM certificate against, and ACM Private CA
     costs ~$400/month just to exist -- far outside SPEC.md Section 1's

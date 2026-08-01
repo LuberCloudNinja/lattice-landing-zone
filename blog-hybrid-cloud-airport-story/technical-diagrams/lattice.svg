@@ -96,7 +96,7 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 #dev-grid { display: none; }
 </style>
   <title id="lattice-diagram-title">VPC Lattice service network</title>
-  <desc id="lattice-diagram-desc">Three independent VPC Lattice services share one service network. The primary service demonstrates path-based (/v1/*), header-based (x-canary:true), and weighted-canary (/canary/* 90/10) routing across an EC2 INSTANCE target, a Lambda target, and ThreeTierStack's own app ALB as a target -- plus an HTTPS listener using a self-signed imported certificate. A second service demonstrates TLS_PASSTHROUGH straight to the same EC2 host's TLS port; a third, independent Lambda-backed service demonstrates dual-stack routing. A Resource Gateway gives the mesh its own app-layer hybrid-connectivity path to the same simulated on-prem broker the network-layer Site-to-Site VPN reaches in the core network panel -- two different hybrid patterns, side by side. The service network is also shared cross-account via AWS RAM and streams access logs to CloudWatch Logs and S3.</desc>
+  <desc id="lattice-diagram-desc">Three independent VPC Lattice services share one service network. The primary service demonstrates path-based (/v1/*), header-based (x-canary:true), and weighted-canary (/canary/* 90/10) routing across an EC2 INSTANCE target, a Lambda target, and a small demo-only ALB (not the live app tier, which runs on Lambda behind API Gateway -- see the Application Path panel) -- plus an HTTPS listener using a self-signed imported certificate. A second service demonstrates TLS_PASSTHROUGH straight to the same EC2 host's TLS port; a third, independent Lambda-backed service demonstrates dual-stack routing. A Resource Gateway gives the mesh its own app-layer hybrid-connectivity path to the same simulated on-prem broker the network-layer Site-to-Site VPN reaches in the core network panel -- two different hybrid patterns, side by side. The service network is also shared cross-account via AWS RAM and streams access logs to CloudWatch Logs and S3.</desc>
   <defs><marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker>
 <marker id="marker-arrow-east-west" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-east-west"/></marker></defs>
   <g id="lattice-boundaries"><g class="stamp-boundary"><rect x="40" y="40" width="1520" height="520" rx="16" class="box-boundary"/><text x="50" y="60" class="label-boundary">VPC Lattice Service Network -- lattice-lab (AWS_IAM auth)</text></g></g>
@@ -128,8 +128,8 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 </g><g class="stamp-service">
 <rect x="700" y="248" width="260" height="64" rx="6" class="box-service-dim"/>
 <use href="#icon-elb" x="716.0" y="268.0" width="24" height="24"/>
-<text x="752" y="276" class="label-service-title">App ALB (ThreeTierStack)</text>
-<text x="752" y="292" class="label-service-sub">see Application Path panel</text>
+<text x="752" y="276" class="label-service-title">Demo ALB (ThreeTierStack)</text>
+<text x="752" y="292" class="label-service-sub">not the live app tier -- that's Lambda</text>
 </g><g class="stamp-service">
 <rect x="80" y="376" width="300" height="64" rx="6" class="box-service"/>
 <use href="#icon-vpc-lattice" x="96.0" y="396.0" width="24" height="24"/>

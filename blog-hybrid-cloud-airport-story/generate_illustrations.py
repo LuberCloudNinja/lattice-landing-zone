@@ -91,44 +91,160 @@ def label(x, y, text, size=12, color=NAVY, weight=600, anchor="middle") -> str:
 # 1. Master "airport map" -- the whole analogy in one picture
 # ---------------------------------------------------------------------------
 def master_map():
-    w, h = 1200, 640
+    w, h = 1400, 940
     body = []
-    body.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="{SKY}"/>')
-    # ground band
-    body.append(f'<rect x="0" y="{h-40}" width="{w}" height="40" fill="{GROUND}" opacity="0.15"/>')
 
-    # inspection checkpoint terminal (center)
-    body.append(terminal(500, 260, 220, 130, "Inspection Checkpoint"))
-    body.append(shield(610, 320, 46))
+    defs = (
+        '<defs>'
+        f'<linearGradient id="mm-sky" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="#cfe8f7"/>'
+        f'<stop offset="55%" stop-color="{SKY}"/>'
+        f'<stop offset="100%" stop-color="#fbe8d3"/>'
+        '</linearGradient>'
+        f'<radialGradient id="mm-sun" cx="50%" cy="50%" r="50%">'
+        f'<stop offset="0%" stop-color="#fff6df" stop-opacity="0.95"/>'
+        f'<stop offset="45%" stop-color="{GOLD}" stop-opacity="0.55"/>'
+        f'<stop offset="100%" stop-color="{GOLD}" stop-opacity="0"/>'
+        '</radialGradient>'
+        f'<radialGradient id="mm-beacon" cx="50%" cy="50%" r="50%">'
+        f'<stop offset="0%" stop-color="{RED}" stop-opacity="0.75"/>'
+        f'<stop offset="100%" stop-color="{RED}" stop-opacity="0"/>'
+        '</radialGradient>'
+        f'<linearGradient id="mm-ground" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="#3a4a5c"/>'
+        f'<stop offset="100%" stop-color="#2a3745"/>'
+        '</linearGradient>'
+        '<filter id="mm-shadow" x="-30%" y="-30%" width="160%" height="160%">'
+        '<feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#1b2a41" flood-opacity="0.22"/>'
+        '</filter>'
+        '</defs>'
+    )
+    body.append(defs)
+    body.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="url(#mm-sky)"/>')
+    body.append(f'<circle cx="{w-160}" cy="90" r="130" fill="url(#mm-sun)"/>')
+    body.append(f'<circle cx="{w-160}" cy="90" r="30" fill="{WHITE}" opacity="0.85"/>')
 
-    # app terminal (left)
-    body.append(terminal(120, 260, 200, 130, "App Terminal"))
-    # provider terminal (right)
-    body.append(terminal(880, 260, 200, 130, "Provider Terminal"))
+    # soft clouds
+    for cx, cy, s in [(220, 70, 1.0), (760, 55, 0.75), (1040, 130, 0.6), (430, 130, 0.55)]:
+        body.append(
+            f'<g transform="translate({cx},{cy}) scale({s})" fill="{WHITE}" opacity="0.75">'
+            '<ellipse cx="0" cy="0" rx="46" ry="18"/><ellipse cx="34" cy="-6" rx="30" ry="15"/>'
+            '<ellipse cx="-32" cy="4" rx="26" ry="13"/></g>'
+        )
 
-    # control tower (taxiway hub) above checkpoint
-    body.append(tower(610, 70, "Control Tower (Transit Gateway)"))
+    # distant hills for depth
+    body.append(f'<path d="M0 {h-190} Q {w*0.18} {h-260} {w*0.36} {h-195} T {w*0.7} {h-205} T {w} {h-185} '
+                 f'V{h-150} H0 Z" fill="{GROUND}" opacity="0.14"/>')
 
-    # taxiways connecting terminals through the checkpoint hub
-    body.append(taxiway([(320, 340), (500, 340)], width=6))
-    body.append(taxiway([(720, 340), (880, 340)], width=6))
-    body.append(taxiway([(610, 260), (610, 175)], width=6))
+    # tarmac / apron ground band with centerline + hold-short chevrons
+    apron_y = h - 150
+    body.append(f'<rect x="0" y="{apron_y}" width="{w}" height="150" fill="url(#mm-ground)"/>')
+    body.append(f'<line x1="40" y1="{h-70}" x2="{w-40}" y2="{h-70}" stroke="{GOLD}" stroke-width="4" '
+                f'stroke-dasharray="26 18" opacity="0.85"/>')
+    for cx in range(120, w - 60, 160):
+        body.append(f'<path d="M{cx} {h-40} l14 -16 l14 16 Z" fill="{GOLD}" opacity="0.55"/>')
 
-    # regional airstrip (on-prem) bottom-left, connected by dashed puddle-jumper route
-    body.append(terminal(60, 470, 160, 90, "Regional Airstrip (on-prem)"))
-    body.append(taxiway([(140, 470), (300, 400), (500, 360)], color=TOWER, width=4, dashed=True))
-    body.append(label(230, 430, "chartered VPN flight", 11, TOWER, 600, "middle"))
+    # compass rose + airport code badge, top-left
+    body.append(
+        f'<g transform="translate(90,86)">'
+        f'<circle r="46" fill="{WHITE}" opacity="0.9" stroke="{NAVY}" stroke-width="2"/>'
+        f'<path d="M0 -36 L8 0 L0 36 L-8 0 Z" fill="{TOWER}"/>'
+        f'<path d="M-36 0 L0 -8 L36 0 L0 8 Z" fill="{NAVY}" opacity="0.55"/>'
+        f'<text x="0" y="-52" text-anchor="middle" font-size="12" font-weight="800" fill="{NAVY}">N</text>'
+        '</g>'
+    )
+    body.append(
+        f'<g transform="translate(40,150)">'
+        f'<rect x="0" y="0" width="112" height="34" rx="8" fill="{NAVY}"/>'
+        f'<text x="56" y="23" text-anchor="middle" font-size="15" font-weight="800" fill="{WHITE}" '
+        f'letter-spacing="2">AWS-1</text></g>'
+    )
 
-    # arrivals hall (public) below app terminal
-    body.append(terminal(80, 480, 200, 100, "Arrivals Hall (public site)"))
-    body.append(taxiway([(180, 480), (180, 400)], color=GOLD, width=4))
+    def hangar(x, y, w_, h_, label_top, label_bottom, accent=TOWER):
+        roof_h = 16
+        body.append(f'<g filter="url(#mm-shadow)">')
+        body.append(f'<rect x="{x}" y="{y+roof_h}" width="{w_}" height="{h_-roof_h}" rx="6" fill="{WHITE}" stroke="{LINE}" stroke-width="2"/>')
+        body.append(f'<polygon points="{x-10},{y+roof_h} {x+w_/2},{y-8} {x+w_+10},{y+roof_h}" fill="{accent}"/>')
+        body.append(f'<rect x="{x+w_/2-3}" y="{y-24}" width="6" height="18" fill="{LINE}"/>')
+        body.append(f'<circle cx="{x+w_/2}" cy="{y-28}" r="4" fill="{RED}"/>')
+        rows, cols = 2, 4
+        cell_w = (w_ - 24) / cols
+        for r in range(rows):
+            for c in range(cols):
+                cx = x + 12 + c * cell_w
+                cy = y + roof_h + 14 + r * 26
+                body.append(f'<rect x="{cx}" y="{cy}" width="{cell_w-8}" height="16" rx="2" fill="{SKY}" stroke="{accent}" stroke-width="1.2"/>')
+        body.append(f'<rect x="{x+w_/2-16}" y="{y+h_-4}" width="32" height="14" fill="{LINE}" opacity="0.5"/>')
+        body.append('</g>')
+        body.append(label(x + w_/2, y + h_ + 30, label_top, 15, NAVY, 800))
+        if label_bottom:
+            body.append(label(x + w_/2, y + h_ + 48, label_bottom, 11.5, LINE, 600))
 
-    # planes in flight (internet traffic)
-    body.append(plane(610, 40, 1.4, NAVY))
-    body.append(plane(950, 480, 1.1, NAVY, rotate=140))
-    body.append(plane(200, 40, 1.1, NAVY, rotate=-30))
+    cx_mid = w / 2
 
-    body.append(label(w/2, 30, "The Airport (your AWS account)", 20, NAVY, 800, "middle"))
+    # planes in flight (internet traffic), with light contrails -- drawn
+    # early and confined to sky pockets clear of the title, compass, sun,
+    # and every building below (checked against each of those boxes).
+    def flying_plane(px, py, scale, rot, trail_dx, trail_dy):
+        body.append(f'<path d="M{px} {py} q {trail_dx*0.5} {trail_dy*0.2} {trail_dx} {trail_dy}" '
+                     f'stroke="{WHITE}" stroke-width="3" fill="none" opacity="0.7" stroke-linecap="round" stroke-dasharray="1 10"/>')
+        body.append(plane(px, py, scale, NAVY, rotate=rot))
+
+    flying_plane(985, 150, 1.15, 20, 60, -55)
+    flying_plane(235, 230, 1.0, -30, -75, 45)
+    flying_plane(1155, 380, 0.9, 150, 70, -60)
+
+    # title, clear of every plane above
+    body.append(label(cx_mid, 42, "The Airport", 27, NAVY, 800, "middle"))
+    body.append(label(cx_mid, 67, "your AWS account, seen from the tower", 14.5, LINE, 600, "middle"))
+
+    # control tower, centered above the checkpoint
+    tower_x, tower_y = cx_mid, 178
+    body.append(f'<circle cx="{tower_x}" cy="{tower_y+30}" r="68" fill="url(#mm-beacon)"/>')
+    body.append(tower(tower_x, tower_y, "Control Tower (Transit Gateway)"))
+
+    # row 1 -- the three main terminals
+    row1_y, row1_h = 330, 150
+    ck_x, ck_w = cx_mid - 115, 230
+    app_x, app_w = 110, 220
+    prov_x, prov_w = w - 330, 220
+
+    hangar(app_x, row1_y, app_w, row1_h, "App Terminal", "on-demand gate desk, no standing crew", accent=TOWER)
+    hangar(ck_x, row1_y, ck_w, row1_h, "Inspection Checkpoint", "every flight path, one firewall tier", accent=RED)
+    hangar(prov_x, row1_y, prov_w, row1_h, "Provider Terminal", "a courier hatch, one-way only", accent="#5a7ea6")
+    body.append(shield(ck_x + ck_w / 2, row1_y + 90, 44))
+
+    taxi_y = row1_y + 95
+    body.append(taxiway([(app_x + app_w, taxi_y), (ck_x, taxi_y)], width=7))
+    body.append(taxiway([(ck_x + ck_w, taxi_y), (prov_x, taxi_y)], width=7))
+    body.append(taxiway([(cx_mid, row1_y - 8), (cx_mid, tower_y + 78)], width=7))
+
+    # row 2 -- three supporting facilities, each tied to a row-1 terminal
+    row2_y, row2_h = 610, 100
+    vault_x, vault_w = 130, 190
+    reg_x, reg_w = 400, 230
+    arr_x, arr_w = 720, 210
+
+    body.append(f'<g filter="url(#mm-shadow)">')
+    body.append(f'<rect x="{vault_x}" y="{row2_y}" width="{vault_w}" height="{row2_h}" rx="10" fill="{WHITE}" stroke="{LINE}" stroke-width="2"/>')
+    body.append(f'<circle cx="{vault_x+vault_w/2}" cy="{row2_y+row2_h/2}" r="28" fill="none" stroke="{TOWER}" stroke-width="7"/>')
+    body.append(f'<circle cx="{vault_x+vault_w/2}" cy="{row2_y+row2_h/2}" r="6" fill="{TOWER}"/>')
+    body.append('</g>')
+    body.append(label(vault_x + vault_w / 2, row2_y + row2_h + 26, "Baggage Vault", 14, NAVY, 800))
+    body.append(label(vault_x + vault_w / 2, row2_y + row2_h + 44, "DynamoDB, gate access only", 11.5, LINE, 600))
+    body.append(taxiway([(vault_x + vault_w / 2, row2_y), (app_x + app_w / 2, row1_y + row1_h)],
+                         color=TOWER, width=3, dashed=True))
+
+    hangar(reg_x, row2_y, reg_w, row2_h, "Regional Airstrip", "on-prem, reached by charter", accent=GOLD)
+    body.append(taxiway([(reg_x + reg_w / 2, row2_y), (ck_x + ck_w / 2 - 10, row1_y + row1_h)],
+                         color=TOWER, width=4, dashed=True))
+    body.append(label(reg_x + reg_w / 2 + 90, row2_y - 16, "chartered VPN flight", 11.5, TOWER, 700))
+
+    hangar(arr_x, row2_y, arr_w, row2_h, "Arrivals Hall", "the public site, front doors only", accent=GOLD)
+    body.append(taxiway([(arr_x + arr_w / 2, row2_y), (app_x + app_w - 20, row1_y + row1_h)],
+                         color=GOLD, width=4))
+
+    body.append(f'<rect x="6" y="6" width="{w-12}" height="{h-12}" rx="18" fill="none" stroke="{NAVY}" stroke-width="2" opacity="0.15"/>')
     return svg_wrap(w, h, "".join(body), "Airport map of the whole architecture")
 
 

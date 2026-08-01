@@ -208,12 +208,28 @@ class BlogAssistantStack(Stack):
         self.memory_bucket.grant_read_write(ask_role)
         security.buckets_key.grant_encrypt_decrypt(ask_role)
         ask_role.add_to_policy(iam.PolicyStatement(
-            actions=["bedrock:Retrieve"],
+            # The Bedrock Agent Runtime Retrieve operation is IAM-namespaced
+            # under bedrock-agent-runtime, not bedrock, despite the boto3
+            # client method also being named "retrieve" -- confirmed live,
+            # same distinction the permissions boundary already draws for
+            # agentic_ai_stack.py's identical call.
+            actions=["bedrock-agent-runtime:Retrieve"],
             resources=[self.knowledge_base.attr_knowledge_base_arn],
         ))
         ask_role.add_to_policy(iam.PolicyStatement(
+            # config.BEDROCK_MODEL_ID is a cross-region inference profile id
+            # (every current Anthropic model on Bedrock is INFERENCE_TYPE
+            # profile-only -- confirmed live, the old direct foundation-model
+            # id this pointed at had reached end of life). Converse against
+            # an inference profile needs permission on the profile ARN AND
+            # the underlying foundation model ARN it fans out to -- the
+            # profile-only grant 403s with a ResourceNotFoundException-style
+            # failure otherwise.
             actions=["bedrock:InvokeModel", "bedrock:Converse"],
-            resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+            resources=[
+                f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{config.BEDROCK_MODEL_ID}",
+                f"arn:aws:bedrock:*::foundation-model/{config.BEDROCK_BASE_MODEL_ID}",
+            ],
         ))
 
         ask_log_group = logs.LogGroup(

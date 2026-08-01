@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Placeholder app-tier backend -- stands in for config.WEBAPP_SOURCE (SPEC.md
 Section 0), which has not been set yet. Stdlib-only (no dependencies to
-install at boot beyond Python itself) so threetier_stack.py's ASG bootstrap
-has something real to run and health-check against.
+install at boot beyond Python itself), run three ways from this one
+container image: as threetier_stack.py's AppFunction (Lambda, via the AWS
+Lambda Web Adapter -- see the Dockerfile), and as the raw process behind
+lattice_stack.py's INSTANCE/IP/ALB target-group demos (via user-data on
+LatticeInstanceTargetHost).
 
 Listens on PORT (see threetier_stack.py -- must match APP_TIER_PORT there).
-Replace this whole directory with the real app and update
-threetier_stack.py's launch-template user-data to run/containerize it
-instead.
+Replace this whole directory with the real app once WEBAPP_SOURCE is set.
 """
 
 import json

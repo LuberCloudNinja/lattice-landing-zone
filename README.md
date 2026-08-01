@@ -111,7 +111,7 @@ approving, same review you'd want even though this README exists.
 
 | Flag | Default | Effect |
 |---|---|---|
-| `MULTI_AZ` | `false` | Flips non-HA tiers (onprem-vpc/provider-vpc AZ count, ThreeTierStack/PrivateLinkStack's Fargate desired task count) from single-AZ/single-task to 2. Does **not** affect app-vpc, which is fixed at >=2 AZs regardless (originally an RDS DBSubnetGroup requirement, kept after that stack's DynamoDB swap -- see network_stack.py), or the inspection VPC, which is always 2 AZs (`config.INSPECTION_AZ_COUNT`) with 2 firewall appliances per AZ (`config.FIREWALL_APPLIANCES_PER_AZ`) regardless -- that's a fixed HA requirement, not a cost/HA trade-off. |
+| `MULTI_AZ` | `false` | Flips non-HA tiers (onprem-vpc/provider-vpc AZ count, PrivateLinkStack's Fargate desired task count) from single-AZ/single-task to 2. Does **not** affect app-vpc, which is fixed at >=2 AZs regardless (originally an RDS DBSubnetGroup requirement, kept after that stack's DynamoDB swap -- see network_stack.py), or the inspection VPC, which is always 2 AZs (`config.INSPECTION_AZ_COUNT`) with 2 firewall appliances per AZ (`config.FIREWALL_APPLIANCES_PER_AZ`) regardless -- that's a fixed HA requirement, not a cost/HA trade-off. ThreeTierStack's app tier is Lambda, which needs no such toggle -- it is inherently multi-AZ. |
 | `ENABLE_KAFKA` | `false` | `KafkaStack` isn't instantiated at all until this is `true` -- deploy everything else first, per SPEC.md's "deploy LAST" instruction. |
 | `ENABLE_RAM_SHARE` / `SECOND_ACCOUNT_ID` | off | Set `SECOND_ACCOUNT_ID` to actually create the AWS RAM cross-account share of the Lattice service network; otherwise `LatticeStack` prints what *would* be created (`RamShareNotCreated` output). |
 | `REMEDIATION_EMAIL` | `you@example.com` | Email subscribed to `DriftRemediationStack`'s `governance-alerts` SNS topic -- set this to your own address before deploying, then confirm the subscription (check your inbox for a "AWS Notification - Subscription Confirmation" email) right after first deploy, or you won't receive anything. |
@@ -340,8 +340,8 @@ expansion:
 
 **Network / VPN** -- from an SSM session on `ThreeTierStack`'s
 `LatticeInstanceTargetHost` (app-vpc's one remaining EC2 instance; the real
-app tier runs on Fargate, see that stack's module docstring), confirm the
-VPN path to the simulated on-prem broker:
+app tier runs on Lambda and has no host to SSM into, see that stack's module
+docstring), confirm the VPN path to the simulated on-prem broker:
 ```bash
 aws ssm start-session --target <LatticeInstanceTargetHostId> --profile deloitte
 nc -vz <BrokerPrivateIp> 9092
@@ -362,8 +362,9 @@ Expect 2 healthy targets per AZ (4 total) once boot (gwlbtun build + first
 period before expecting healthy status.
 
 **Three-tier app** -- `curl <WebDistributionUrl>` for the static placeholder
-frontend; `curl <WebDistributionUrl>/api/health` for the app tier via the
-CloudFront VPC origin.
+frontend; `curl <WebDistributionUrl>/api/health` for the app tier, which
+CloudFront now reaches at `/api/*` through API Gateway HTTP API straight to
+the `AppFunction` Lambda -- no ALB, no VPC origin, in that path.
 
 **PrivateLink** -- from an SSM session inside app-vpc:
 ```bash
@@ -421,6 +422,23 @@ POST.md` at the repo root for the GitHub-readable version of the same post,
 and `blog-hybrid-cloud-airport-story/generate_illustrations.py` /
 `diagram-site/generate_diagram.py`'s `write_standalone_panel_svgs()` for how
 both sets of diagrams get built.
+
+App tier compute is fully serverless: no ALB, no ECS cluster, no Auto
+Scaling group, and no host that sits there idling between requests. CloudFront
+routes `/api/*` to an API Gateway HTTP API, which invokes a single Lambda
+function (`AppFunction`) running `app/backend/`'s container image straight
+from ECR -- the exact same Dockerfile and the exact same `app.py`, unchanged.
+The only thing that moved is what runs the container: the Dockerfile now
+layers in the AWS Lambda Web Adapter, a small Lambda extension that
+registers with the Lambda Runtime API and forwards each invocation to the
+app's own `http.server` process on `localhost:8080` as a real HTTP request,
+then returns the response the same way. `app.py` never knew it stopped
+running on ECS. `ThreeTierStack`'s module docstring covers the one
+consequence: VPC Lattice's ALB-type and INSTANCE-type target groups
+(`lattice_stack.py` L4a/L4b/L4c) need a real ALB and a real EC2 instance ID
+respectively, neither of which a Lambda function can be, so both are kept
+alive purely as small, clearly-labeled demo hosts, not part of the live
+app-tier traffic path.
 
 **Blog analytics** -- `blog_analytics_stack.py` (API Gateway + Lambda +
 DynamoDB, reached at `/analytics/*` on the same CloudFront distribution)
@@ -561,7 +579,7 @@ matching the headings below.
 **L4a -- service network + first service**
 - `CfnServiceNetwork` (`auth_type=AWS_IAM`) -- line 77
 - `CfnService` (HTTP) -- line 81
-- `CfnTargetGroup` type `INSTANCE`, health-checked -- line 83 (targets `ThreeTierStack`'s `LatticeInstanceTargetHost` -- see that stack's module docstring for why the real app tier, on Fargate, can't fill this role itself)
+- `CfnTargetGroup` type `INSTANCE`, health-checked -- line 83 (targets `ThreeTierStack`'s `LatticeInstanceTargetHost` -- see that stack's module docstring for why the real app tier, on Lambda, can't fill this role itself)
 - `CfnListener` (HTTP/80, default forward action = the "default rule") -- line 99
 - `CfnServiceNetworkServiceAssociation` -- line 130
 - `CfnServiceNetworkVpcAssociation` (app-vpc, with the SG below) -- line 135
@@ -569,7 +587,7 @@ matching the headings below.
 **L4b -- all target-group types + rich rules**
 - `CfnTargetGroup` type `IP` -- line 145 (same dedicated host as L4a, addressed by IP)
 - `CfnTargetGroup` type `LAMBDA` (+ inline `lambda_.Function`) -- line 179
-- `CfnTargetGroup` type `ALB` (fronts `ThreeTierStack`'s ALB listener, backed by its Fargate service) -- line 187
+- `CfnTargetGroup` type `ALB` (fronts `ThreeTierStack`'s ALB listener -- a small demo-only ALB, not the live app-tier traffic path, which is Lambda behind API Gateway) -- line 187
 - Path-based rule (`/v1/*`) -- line 198
 - Header-based rule (`x-canary: true`) -- line 222
 - Weighted 90/10 canary rule -- line 248

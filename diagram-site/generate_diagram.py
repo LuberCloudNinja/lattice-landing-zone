@@ -813,11 +813,15 @@ def build_sagemaker_svg() -> str:
 def build_application_path_svg() -> str:
     """Sixth, independent diagram: the request path through the always-on
     application layer -- privatelink_stack.py + threetier_stack.py --
-    Viewer -> CloudFront -> (default) static S3 frontend or (/api/*) the
-    internal app-tier ALB via a CloudFront VPC origin -> Fargate -> DynamoDB,
-    plus the separate provider-vpc PrivateLink cluster (NLB -> Fargate)
-    reached from app-vpc through a one-way interface endpoint. VPC Lattice's
-    own service network is a big enough topic to get its own panel next."""
+    Viewer -> CloudFront -> (default) static S3 frontend or (/api/*) API
+    Gateway HTTP API -> a container-image Lambda (app/backend/, run via the
+    AWS Lambda Web Adapter) -> DynamoDB, plus the separate provider-vpc
+    PrivateLink cluster (NLB -> Fargate) reached from app-vpc through a
+    one-way interface endpoint. No ALB, no ECS cluster, and no idle compute
+    sit in this request path at all -- app-vpc's small demo ALB (kept alive
+    only for VPC Lattice's ALB-type target group) shows up in the next
+    panel instead. VPC Lattice's own service network is a big enough topic
+    to get its own panel after that."""
     w, h = 1600, 320
     services, flows, boundaries = [], [], []
 
@@ -832,37 +836,37 @@ def build_application_path_svg() -> str:
     flows.append(f'<text x="{cf_x + 4}" y="{viewer_y - 8}" class="flow-label">default route</text>')
 
     app_x, app_y, app_w, app_h = 620, 20, 580, 240
-    boundaries.append(boundary(app_x, app_y, app_w, app_h, "app-vpc"))
-    alb_x, alb_y = app_x + 40, app_y + 60
-    services.append(service_box(alb_x, alb_y, 140, 56, "ALB", "elb", sub="internal"))
-    fargate_x = alb_x + 180
-    services.append(service_box(fargate_x, alb_y, 180, 56, "Fargate (app tier)", "fargate"))
-    dynamo_x = fargate_x + 220
-    services.append(service_box(dynamo_x, alb_y, 140, 56, "DynamoDB", "dynamodb"))
-    flows.append(orthogonal_path([(alb_x + 140, alb_y + 28), (fargate_x, alb_y + 28)], "east-west", bidirectional=False))
-    flows.append(orthogonal_path([(fargate_x + 180, alb_y + 28), (dynamo_x, alb_y + 28)], "east-west", bidirectional=False))
+    boundaries.append(boundary(app_x, app_y, app_w, app_h, "app tier -- no VPC needed"))
+    api_x, api_y = app_x + 40, app_y + 60
+    services.append(service_box(api_x, api_y, 160, 56, "API Gateway (HTTP)", "api-gateway"))
+    lambda_x = api_x + 200
+    services.append(service_box(lambda_x, api_y, 200, 56, "AppFunction (Lambda)", "lambda", sub="container image, Lambda Web Adapter"))
+    dynamo_x = lambda_x + 240
+    services.append(service_box(dynamo_x, api_y, 140, 56, "DynamoDB", "dynamodb"))
+    flows.append(orthogonal_path([(api_x + 160, api_y + 28), (lambda_x, api_y + 28)], "east-west", bidirectional=False))
+    flows.append(orthogonal_path([(lambda_x + 200, api_y + 28), (dynamo_x, api_y + 28)], "east-west", bidirectional=False))
     flows.append(orthogonal_path(
-        [(cf_x + 80, viewer_y + 56), (cf_x + 80, alb_y - 20), (alb_x + 70, alb_y - 20), (alb_x + 70, alb_y)],
+        [(cf_x + 80, viewer_y + 56), (cf_x + 80, api_y - 20), (api_x + 80, api_y - 20), (api_x + 80, api_y)],
         "north-south", dashed=True, bidirectional=False))
-    flows.append(f'<text x="{cf_x + 90}" y="{alb_y - 26}" class="flow-label">/api/* via CloudFront VPC origin</text>')
+    flows.append(f'<text x="{cf_x + 90}" y="{api_y - 26}" class="flow-label">/api/*</text>')
 
-    lattice_host_y = alb_y + 96
-    services.append(service_box(alb_x, lattice_host_y, 520, 56, "EC2: LatticeInstanceTargetHost", "ec2",
-                                 sub="same host = Lattice INSTANCE + IP + TLS_PASSTHROUGH targets -- see next panel"))
+    lattice_host_y = api_y + 96
+    services.append(service_box(api_x, lattice_host_y, 560, 56, "EC2 + ALB: Lattice target-group demo hosts", "ec2",
+                                 sub="INSTANCE + IP + ALB + TLS_PASSTHROUGH targets -- see next panel"))
 
     prov_x, prov_y, prov_w, prov_h = 1240, 20, 320, 240
     boundaries.append(boundary(prov_x, prov_y, prov_w, prov_h, "provider-vpc (PrivateLink)"))
     nlb_x = prov_x + 40
-    services.append(service_box(nlb_x, alb_y, 240, 56, "NLB", "nlb", sub="fronts a VPC Endpoint Service"))
-    provider_fargate_y = alb_y + 96
+    services.append(service_box(nlb_x, api_y, 240, 56, "NLB", "nlb", sub="fronts a VPC Endpoint Service"))
+    provider_fargate_y = api_y + 96
     services.append(service_box(nlb_x, provider_fargate_y, 240, 56, "Fargate (provider)", "fargate"))
-    flows.append(orthogonal_path([(nlb_x + 120, alb_y + 56), (nlb_x + 120, provider_fargate_y)], "north-south", bidirectional=False))
+    flows.append(orthogonal_path([(nlb_x + 120, api_y + 56), (nlb_x + 120, provider_fargate_y)], "north-south", bidirectional=False))
 
-    pl_y = alb_y + 28
+    pl_y = api_y + 28
     flows.append(orthogonal_path(
-        [(dynamo_x + 140, pl_y), (prov_x - 24, pl_y), (prov_x - 24, alb_y + 28), (nlb_x, alb_y + 28)],
+        [(dynamo_x + 140, pl_y), (nlb_x, pl_y)],
         "east-west", dashed=True, bidirectional=False))
-    flows.append(f'<text x="{dynamo_x + 150}" y="{pl_y - 8}" class="flow-label">PrivateLink -- one-way, no peering</text>')
+    flows.append(f'<text x="{dynamo_x + 60}" y="{api_y - 10}" text-anchor="middle" class="flow-label">PrivateLink -- one-way, no peering</text>')
 
     defs = "\n".join(
         f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
@@ -870,8 +874,8 @@ def build_application_path_svg() -> str:
         for cls in ("north-south", "east-west")
     )
     return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="app-diagram-title app-diagram-desc" xmlns="http://www.w3.org/2000/svg">
-  <title id="app-diagram-title">Application path -- three-tier + PrivateLink</title>
-  <desc id="app-diagram-desc">A viewer hits CloudFront, which serves the static frontend from a private S3 bucket by default or, for /api/* requests, reaches the internal app-tier ALB through a CloudFront VPC origin (no public ALB needed). The ALB forwards to a Fargate service which reads/writes DynamoDB; the same app-vpc also hosts one EC2 instance that exists solely to be a VPC Lattice target (see the next panel). A separate provider-vpc runs its own Fargate service behind an internal NLB, which fronts a PrivateLink VPC Endpoint Service; app-vpc reaches it one-way through an interface endpoint, with no VPC peering and no shared route tables.</desc>
+  <title id="app-diagram-title">Application path -- serverless three-tier + PrivateLink</title>
+  <desc id="app-diagram-desc">A viewer hits CloudFront, which serves the static frontend from a private S3 bucket by default or, for /api/* requests, reaches an API Gateway HTTP API. That API invokes a single Lambda function running app/backend/'s own container image (via the AWS Lambda Web Adapter, unchanged app code) which reads/writes DynamoDB -- no ALB, no ECS cluster, no idle compute in this path at all. The same app-vpc also hosts a small EC2 instance and a small internal ALB that exist solely to be VPC Lattice targets (see the next panel). A separate provider-vpc runs its own Fargate service behind an internal NLB, which fronts a PrivateLink VPC Endpoint Service; app-vpc reaches it one-way through an interface endpoint, with no VPC peering and no shared route tables.</desc>
   <defs>{defs}</defs>
   <g id="app-boundaries">{"".join(boundaries)}</g>
   <g id="app-services">{"".join(services)}</g>
@@ -913,8 +917,8 @@ def build_lattice_svg() -> str:
     services.append(service_box(lambda_x, target_y, 240, 64, "canary Lambda", "lambda",
                                  sub="header + weighted + dual-stack"))
     alb_x = lambda_x + 280
-    services.append(service_box(alb_x, target_y, 260, 64, "App ALB (ThreeTierStack)", "elb",
-                                 sub="see Application Path panel", dim=True))
+    services.append(service_box(alb_x, target_y, 260, 64, "Demo ALB (ThreeTierStack)", "elb",
+                                 sub="not the live app tier -- that's Lambda", dim=True))
 
     def route(sx, label, tx, dashed=True):
         flows.append(orthogonal_path([(sx, svc_y + 64), (sx, target_y - 16), (tx, target_y - 16), (tx, target_y)],
@@ -958,7 +962,7 @@ def build_lattice_svg() -> str:
     )
     return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="lattice-diagram-title lattice-diagram-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="lattice-diagram-title">VPC Lattice service network</title>
-  <desc id="lattice-diagram-desc">Three independent VPC Lattice services share one service network. The primary service demonstrates path-based (/v1/*), header-based (x-canary:true), and weighted-canary (/canary/* 90/10) routing across an EC2 INSTANCE target, a Lambda target, and ThreeTierStack's own app ALB as a target -- plus an HTTPS listener using a self-signed imported certificate. A second service demonstrates TLS_PASSTHROUGH straight to the same EC2 host's TLS port; a third, independent Lambda-backed service demonstrates dual-stack routing. A Resource Gateway gives the mesh its own app-layer hybrid-connectivity path to the same simulated on-prem broker the network-layer Site-to-Site VPN reaches in the core network panel -- two different hybrid patterns, side by side. The service network is also shared cross-account via AWS RAM and streams access logs to CloudWatch Logs and S3.</desc>
+  <desc id="lattice-diagram-desc">Three independent VPC Lattice services share one service network. The primary service demonstrates path-based (/v1/*), header-based (x-canary:true), and weighted-canary (/canary/* 90/10) routing across an EC2 INSTANCE target, a Lambda target, and a small demo-only ALB (not the live app tier, which runs on Lambda behind API Gateway -- see the Application Path panel) -- plus an HTTPS listener using a self-signed imported certificate. A second service demonstrates TLS_PASSTHROUGH straight to the same EC2 host's TLS port; a third, independent Lambda-backed service demonstrates dual-stack routing. A Resource Gateway gives the mesh its own app-layer hybrid-connectivity path to the same simulated on-prem broker the network-layer Site-to-Site VPN reaches in the core network panel -- two different hybrid patterns, side by side. The service network is also shared cross-account via AWS RAM and streams access logs to CloudWatch Logs and S3.</desc>
   <defs>{defs}</defs>
   <g id="lattice-boundaries">{"".join(boundaries)}</g>
   <g id="lattice-services">{"".join(services)}</g>
@@ -1267,18 +1271,18 @@ PROSE = {
         "pattern_desc": "Grounding a model in a vector-searchable knowledge base instead of trusting its own training data is the standard fix for both hallucination and staleness: the model answers from what is actually in the index, not from whatever it happened to learn once. Making memory a plain S3 object instead of a framework-managed session is a smaller but deliberate choice in the same spirit as the rest of this project: state that a human can open, read, and delete, not state hidden behind an abstraction.",
     },
     'application-path': {
-        "eyebrow": 'Private-Origin Web + One-Way Service Exposure',
-        "why": "A public ALB or a public Fargate service is unnecessary attack surface when CloudFront is the only legitimate entry point, and cross-VPC service consumption doesn't need peering or shared route tables when only one service, in one direction, needs to cross the boundary. This layer proves both: a web app with zero public compute behind it, and an app-vpc-to-provider-vpc boundary where the consumer can reach the provider but the provider has no path back at all.",
-        "what": "CloudFront is the only public entry point. The default behavior serves the static frontend straight from a private S3 bucket (OAC-only, BLOCK_ALL public access); /api/* is proxied through a CloudFront VPC origin directly to an internal ALB that never gets a public IP or public DNS name. Separately, app-vpc needs to call a service that physically lives in provider-vpc without merging the two networks -- PrivateLink delivers that without a peering connection, without a transit gateway, and without either VPC learning the other's CIDR.",
-        "how": "CloudFront's default behavior origins on the web bucket via Origin Access Control; the /api/* behavior uses origins.VpcOrigin.with_application_load_balancer(alb, http_port=80) to reach the internal ALB (internet_facing=False) over ENIs CloudFront manages inside app-vpc, with the ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy and caching disabled since these are API calls, not static assets. The ALB forwards to the app-tier Fargate service (256 CPU / 512 MB, IP-type target group since awsvpc mode has no host instance to register by ID), which writes to a DynamoDB TableV2 on on-demand billing with point-in-time recovery enabled, reached over a DynamoDB gateway VPC endpoint rather than the NAT path. On the PrivateLink side, provider-vpc runs its own Fargate service behind an internal NLB (explicit security group -- CDK's auto-generated placeholder SG has no real ingress/egress and silently fails target health checks if you skip it), fronted by a VPC Endpoint Service with acceptance_required=False since this is single-account. app-vpc consumes it through an Interface VPC Endpoint with private_dns_enabled=False, so the consumer resolves the endpoint's own generated DNS name rather than a verified custom domain. There's no peering connection, no route table entry for provider-vpc's 10.2.0.0/16 in app-vpc, and none for app-vpc's 10.1.0.0/16 in provider-vpc -- the endpoint is just an ENI projected into app-vpc, so the provider has no route back into the consumer's network at all.",
-        "pattern_name": 'Private-origin CDN fronting + one-way PrivateLink service exposure',
-        "pattern_desc": "CloudFront-to-private-origin removes the ALB's public attack surface without giving up edge TLS termination and caching; PrivateLink removes the need for VPC peering or a transit gateway when only one service, one direction, needs to cross a VPC boundary. The shared tradeoff is asymmetry by design -- the consumer has zero visibility into the provider's network and vice versa, which is exactly the isolation property you want between an app tier and a third-party-style backend, at the cost of not being able to route to anything else in that VPC even if a future use case needed it.",
+        "eyebrow": 'Serverless Web Tier + One-Way Service Exposure',
+        "why": "An always-on ALB and an always-on Fargate service both bill and sit there whether or not anyone is using the app -- unnecessary cost and unnecessary attack surface when CloudFront is the only legitimate entry point and the workload is bursty at best. This layer proves a web app can have zero idle compute behind it at all, plus, separately, that cross-VPC service consumption doesn't need peering or shared route tables when only one service, in one direction, needs to cross the boundary.",
+        "what": "CloudFront is the only public entry point. The default behavior serves the static frontend straight from a private S3 bucket (OAC-only, BLOCK_ALL public access); /api/* is proxied to an API Gateway HTTP API, which invokes a Lambda function that never gets a public IP or public DNS name and only runs -- and only bills -- while it's handling a request. Separately, app-vpc needs to call a service that physically lives in provider-vpc without merging the two networks -- PrivateLink delivers that without a peering connection, without a transit gateway, and without either VPC learning the other's CIDR.",
+        "how": "CloudFront's default behavior origins on the web bucket via Origin Access Control; the /api/* behavior is a plain HttpOrigin pointed at the API Gateway HTTP API's own domain, with the ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy and caching disabled since these are API calls, not static assets. The API invokes AppFunction, a Lambda running app/backend/'s own container image straight from ECR -- the Dockerfile layers in the AWS Lambda Web Adapter, a Lambda extension that registers with the Lambda Runtime API and forwards each invocation to the app's own http.server process on localhost as a real HTTP request, so app.py never had to be rewritten into a handler(event, context) function. The function is not VPC-attached; it reaches DynamoDB (TableV2, on-demand billing, point-in-time recovery enabled) over the same public, TLS-encrypted, IAM-authenticated API endpoint every other Lambda in this project already calls Bedrock/S3/DynamoDB through, so there's no VPC ENI cold-start cost and no interface endpoints to provision just for the app tier to start. VPC Lattice still needs a real ALB and a real EC2 instance ID for its ALB-type and INSTANCE-type target groups, so both are kept alive as small, explicitly-labeled demo hosts -- not part of this request path. On the PrivateLink side, provider-vpc runs its own Fargate service behind an internal NLB (explicit security group -- CDK's auto-generated placeholder SG has no real ingress/egress and silently fails target health checks if you skip it), fronted by a VPC Endpoint Service with acceptance_required=False since this is single-account. app-vpc consumes it through an Interface VPC Endpoint with private_dns_enabled=False, so the consumer resolves the endpoint's own generated DNS name rather than a verified custom domain. There's no peering connection, no route table entry for provider-vpc's 10.2.0.0/16 in app-vpc, and none for app-vpc's 10.1.0.0/16 in provider-vpc -- the endpoint is just an ENI projected into app-vpc, so the provider has no route back into the consumer's network at all.",
+        "pattern_name": 'Serverless private-origin web tier + one-way PrivateLink service exposure',
+        "pattern_desc": "API Gateway plus a container-image Lambda removes both the ALB's public attack surface and its idle cost, without giving up the container packaging a real app tier wants; PrivateLink removes the need for VPC peering or a transit gateway when only one service, one direction, needs to cross a VPC boundary. The shared tradeoff is asymmetry by design -- the consumer has zero visibility into the provider's network and vice versa, which is exactly the isolation property you want between an app tier and a third-party-style backend, at the cost of not being able to route to anything else in that VPC even if a future use case needed it.",
     },
     'lattice': {
         "eyebrow": 'Application-Layer Service Mesh',
-        "why": "Three independent compute primitives — an EC2 Auto Scaling target, a Lambda function, and ThreeTierStack's existing app-tier ALB — needed to sit behind one consistent, authenticated routing surface without forcing every consumer to know which primitive answers which request. Reimplementing path, header, and weighted routing logic per target type (a Lambda@Edge function here, custom ALB rules there) would have meant three different places to audit and three different auth models. It also needed to prove Lattice's hybrid story is more than VPN-adjacent: an app should be able to reach on-prem through the mesh itself, not only through the network layer.",
+        "why": "Three independent compute primitives — an EC2 instance, a Lambda function, and an ALB — needed to sit behind one consistent, authenticated routing surface without forcing every consumer to know which primitive answers which request. Reimplementing path, header, and weighted routing logic per target type (a Lambda@Edge function here, custom ALB rules there) would have meant three different places to audit and three different auth models. It also needed to prove Lattice's hybrid story is more than VPN-adjacent: an app should be able to reach on-prem through the mesh itself, not only through the network layer.",
         "what": 'One VPC Lattice service network exposes three services that exercise the three routing primitives Lattice actually offers: a path rule (/v1/* to the EC2 instance target group), a header rule (x-canary:true to the Lambda target group), and a weighted 90/10 canary split — all resolvable by any associated consumer VPC through the same Lattice-managed DNS name, with per-service IAM auth instead of security-group-only trust. A second service running TLS_PASSTHROUGH proves the mesh can broker a connection without terminating TLS itself, leaving certificate ownership at the target. The Resource Gateway gives the mesh its own application-layer path to the same on-prem broker the TGW/VPN reaches at the network layer, so there are two independently-failing hybrid connectivity patterns side by side rather than one.',
-        "how": "The service network is created with auth_type=AWS_IAM, so every request is SigV4-signed and evaluated against policy rather than just routed by IP reachability. The three-target service composes listener rules against target groups of type INSTANCE (EC2), LAMBDA, and ALB — the ALB target group points at ThreeTierStack's own app-tier load balancer, registered directly as a Lattice target instead of duplicated infrastructure, so the mesh fronts what the three-tier app already runs. Auth policies are attached at both the service-network and the individual-service level, scoped with an aws:SourceVpc condition so only requests originating from the associated consumer VPC are authorized regardless of which network path they arrived on. The Resource Gateway plus a resource configuration (type single), associated to the service network, extend that same IAM-authenticated mesh out to the on-prem broker, and the service network is shared cross-account via AWS RAM. Access logs are enabled on the service network and delivered to both CloudWatch Logs and S3 for the audit trail.",
+        "how": "The service network is created with auth_type=AWS_IAM, so every request is SigV4-signed and evaluated against policy rather than just routed by IP reachability. The three-target service composes listener rules against target groups of type INSTANCE (EC2), LAMBDA, and ALB — the ALB target group points at a small internal ALB ThreeTierStack keeps alive purely to give this target-group type something real to register, since the actual app tier runs on Lambda behind API Gateway and has no ALB in its own request path at all. Auth policies are attached at both the service-network and the individual-service level, scoped with an aws:SourceVpc condition so only requests originating from the associated consumer VPC are authorized regardless of which network path they arrived on. The Resource Gateway plus a resource configuration (type single), associated to the service network, extend that same IAM-authenticated mesh out to the on-prem broker, and the service network is shared cross-account via AWS RAM. Access logs are enabled on the service network and delivered to both CloudWatch Logs and S3 for the audit trail.",
         "pattern_name": 'Hub-and-spoke L7 service mesh with heterogeneous target-group federation',
         "pattern_desc": "A single service network is the hub every consumer VPC associates into, standing in for what would otherwise be a full mesh of PrivateLink endpoints or peering connections per producer/consumer pair, while target groups abstract away whether the backend is an EC2 instance, a Lambda function, or someone else's ALB. The trade-off is that the service network becomes the blast-radius boundary for the auth policy — getting the aws:SourceVpc condition right matters more here than it would in a point-to-point design, because one misconfigured policy is now shared exposure for every service on the mesh.",
     },
@@ -1327,7 +1331,7 @@ PROSE = {
 PANELS = [
     ("Core Network &amp; Traffic Inspection", "network_stack.py &middot; inspection_stack.py",
      "network-inspection", build_svg),
-    ("Application Path -- Three-Tier + PrivateLink", "privatelink_stack.py &middot; threetier_stack.py",
+    ("Application Path -- Serverless Three-Tier + PrivateLink", "privatelink_stack.py &middot; threetier_stack.py",
      "application-path", build_application_path_svg),
     ("Blog Read Analytics", "blog_analytics_stack.py &middot; API Gateway + Lambda + DynamoDB behind the same CloudFront distribution",
      "blog-analytics", build_blog_analytics_svg),
@@ -1352,8 +1356,8 @@ PANELS = [
 # story is the WHY/WHAT/HOW/PATTERN prose under each diagram.
 DEK = {
     "network-inspection": "Every spoke's traffic transits one centralized, auto-scaled firewall tier before reaching its destination.",
-    "application-path": "Zero public compute -- CloudFront and PrivateLink do all the boundary-crossing.",
-    "lattice": "One mesh, three routing primitives -- EC2, Lambda, and an existing ALB -- unified behind IAM-authenticated rules.",
+    "application-path": "Zero idle compute -- a container-image Lambda behind API Gateway, no ALB in the live path at all.",
+    "lattice": "One mesh, three routing primitives -- EC2, Lambda, and a small demo ALB -- unified behind IAM-authenticated rules.",
     "security-governance": "A permissions boundary as a hard ceiling, plus three independent detection-and-remediation loops.",
     "pipeline": "The pipeline redeploys its own definition before it deploys anything else.",
     "cloudwan": "An incremental migration path onto Cloud WAN, run alongside the existing Transit Gateway.",

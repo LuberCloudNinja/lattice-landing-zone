@@ -95,11 +95,11 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 
 #dev-grid { display: none; }
 </style>
-  <title id="app-diagram-title">Application path -- three-tier + PrivateLink</title>
-  <desc id="app-diagram-desc">A viewer hits CloudFront, which serves the static frontend from a private S3 bucket by default or, for /api/* requests, reaches the internal app-tier ALB through a CloudFront VPC origin (no public ALB needed). The ALB forwards to a Fargate service which reads/writes DynamoDB; the same app-vpc also hosts one EC2 instance that exists solely to be a VPC Lattice target (see the next panel). A separate provider-vpc runs its own Fargate service behind an internal NLB, which fronts a PrivateLink VPC Endpoint Service; app-vpc reaches it one-way through an interface endpoint, with no VPC peering and no shared route tables.</desc>
+  <title id="app-diagram-title">Application path -- serverless three-tier + PrivateLink</title>
+  <desc id="app-diagram-desc">A viewer hits CloudFront, which serves the static frontend from a private S3 bucket by default or, for /api/* requests, reaches an API Gateway HTTP API. That API invokes a single Lambda function running app/backend/'s own container image (via the AWS Lambda Web Adapter, unchanged app code) which reads/writes DynamoDB -- no ALB, no ECS cluster, no idle compute in this path at all. The same app-vpc also hosts a small EC2 instance and a small internal ALB that exist solely to be VPC Lattice targets (see the next panel). A separate provider-vpc runs its own Fargate service behind an internal NLB, which fronts a PrivateLink VPC Endpoint Service; app-vpc reaches it one-way through an interface endpoint, with no VPC peering and no shared route tables.</desc>
   <defs><marker id="marker-arrow-north-south" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-north-south"/></marker>
 <marker id="marker-arrow-east-west" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="marker-east-west"/></marker></defs>
-  <g id="app-boundaries"><g class="stamp-boundary"><rect x="620" y="20" width="580" height="240" rx="16" class="box-boundary"/><text x="630" y="40" class="label-boundary">app-vpc</text></g><g class="stamp-boundary"><rect x="1240" y="20" width="320" height="240" rx="16" class="box-boundary"/><text x="1250" y="40" class="label-boundary">provider-vpc (PrivateLink)</text></g></g>
+  <g id="app-boundaries"><g class="stamp-boundary"><rect x="620" y="20" width="580" height="240" rx="16" class="box-boundary"/><text x="630" y="40" class="label-boundary">app tier -- no VPC needed</text></g><g class="stamp-boundary"><rect x="1240" y="20" width="320" height="240" rx="16" class="box-boundary"/><text x="1250" y="40" class="label-boundary">provider-vpc (PrivateLink)</text></g></g>
   <g id="app-services"><g class="stamp-service">
 <rect x="40" y="80" width="110" height="56" rx="6" class="box-service"/>
 <g transform="translate(84,95)" class="icon"><path d="M0 7 C3 1 19 1 22 7 C19 13 3 13 0 7 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
@@ -114,23 +114,23 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 <text x="442" y="104" class="label-service-title">S3 (web tier)</text>
 <text x="442" y="120" class="label-service-sub">static frontend, OAC</text>
 </g><g class="stamp-service">
-<rect x="660" y="80" width="140" height="56" rx="6" class="box-service"/>
-<use href="#icon-elb" x="676.0" y="96.0" width="24" height="24"/>
-<text x="712" y="104" class="label-service-title">ALB</text>
-<text x="712" y="120" class="label-service-sub">internal</text>
+<rect x="660" y="80" width="160" height="56" rx="6" class="box-service"/>
+<use href="#icon-api-gateway" x="726.0" y="88.0" width="28" height="28"/>
+<text x="740" y="130" class="label-service-title" text-anchor="middle">API Gateway (HTTP)</text>
 </g><g class="stamp-service">
-<rect x="840" y="80" width="180" height="56" rx="6" class="box-service"/>
-<use href="#icon-fargate" x="916.0" y="88.0" width="28" height="28"/>
-<text x="930" y="130" class="label-service-title" text-anchor="middle">Fargate (app tier)</text>
+<rect x="860" y="80" width="200" height="56" rx="6" class="box-service"/>
+<use href="#icon-lambda" x="876.0" y="96.0" width="24" height="24"/>
+<text x="912" y="104" class="label-service-title">AppFunction (Lambda)</text>
+<text x="912" y="120" class="label-service-sub">container image, Lambda Web Adapter</text>
 </g><g class="stamp-service">
-<rect x="1060" y="80" width="140" height="56" rx="6" class="box-service"/>
-<use href="#icon-dynamodb" x="1116.0" y="88.0" width="28" height="28"/>
-<text x="1130" y="130" class="label-service-title" text-anchor="middle">DynamoDB</text>
+<rect x="1100" y="80" width="140" height="56" rx="6" class="box-service"/>
+<use href="#icon-dynamodb" x="1156.0" y="88.0" width="28" height="28"/>
+<text x="1170" y="130" class="label-service-title" text-anchor="middle">DynamoDB</text>
 </g><g class="stamp-service">
-<rect x="660" y="176" width="520" height="56" rx="6" class="box-service"/>
+<rect x="660" y="176" width="560" height="56" rx="6" class="box-service"/>
 <use href="#icon-ec2" x="676.0" y="192.0" width="24" height="24"/>
-<text x="712" y="200" class="label-service-title">EC2: LatticeInstanceTargetHost</text>
-<text x="712" y="216" class="label-service-sub">same host = Lattice INSTANCE + IP + TLS_PASSTHROUGH targets -- see next panel</text>
+<text x="712" y="200" class="label-service-title">EC2 + ALB: Lattice target-group demo hosts</text>
+<text x="712" y="216" class="label-service-sub">INSTANCE + IP + ALB + TLS_PASSTHROUGH targets -- see next panel</text>
 </g><g class="stamp-service">
 <rect x="1280" y="80" width="240" height="56" rx="6" class="box-service"/>
 <use href="#icon-nlb" x="1296.0" y="96.0" width="24" height="24"/>
@@ -141,5 +141,5 @@ footer { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
 <use href="#icon-fargate" x="1386.0" y="184.0" width="28" height="28"/>
 <text x="1400" y="226" class="label-service-title" text-anchor="middle">Fargate (provider)</text>
 </g></g>
-  <g id="app-flows"><path d="M 150 108 L 190 108" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 350 108 L 390 108" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><text x="194" y="72" class="flow-label">default route</text><path d="M 800 108 L 840 108" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1020 108 L 1060 108" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 270 136 L 270 60 L 730 60 L 730 80" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><text x="280" y="54" class="flow-label">/api/* via CloudFront VPC origin</text><path d="M 1400 136 L 1400 176" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1200 108 L 1216 108 L 1216 108 L 1280 108" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><text x="1210" y="100" class="flow-label">PrivateLink -- one-way, no peering</text></g>
+  <g id="app-flows"><path d="M 150 108 L 190 108" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 350 108 L 390 108" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><text x="194" y="72" class="flow-label">default route</text><path d="M 820 108 L 860 108" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 1060 108 L 1100 108" class="flow flow-east-west" marker-end="url(#marker-arrow-east-west)"/><path d="M 270 136 L 270 60 L 740 60 L 740 80" class="flow flow-north-south" stroke-dasharray="6 4" marker-end="url(#marker-arrow-north-south)"/><text x="280" y="54" class="flow-label">/api/*</text><path d="M 1400 136 L 1400 176" class="flow flow-north-south" marker-end="url(#marker-arrow-north-south)"/><path d="M 1240 108 L 1280 108" class="flow flow-east-west" stroke-dasharray="6 4" marker-end="url(#marker-arrow-east-west)"/><text x="1160" y="70" text-anchor="middle" class="flow-label">PrivateLink -- one-way, no peering</text></g>
 </svg>

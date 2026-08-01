@@ -83,7 +83,14 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 # meaningfully billable even idle, so this is a deploy-tour-teardown demo
 # layer like ENABLE_CLOUDWAN, not something to leave running.
 ENABLE_AI = os.environ.get("ENABLE_AI", "false").lower() == "true"
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0")
+# Current Anthropic models on Bedrock are INFERENCE_PROFILE only (confirmed
+# live via `aws bedrock list-foundation-models` -- claude-3-5-sonnet-* is
+# LEGACY/EOL). Converse must be called with the cross-region inference
+# profile id, not a bare foundation-model id -- callers deriving an IAM
+# resource ARN from this need both the inference-profile ARN and the
+# underlying foundation-model ARN (see BEDROCK_BASE_MODEL_ID below).
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5")
+BEDROCK_BASE_MODEL_ID = BEDROCK_MODEL_ID.split(".", 1)[1] if "." in BEDROCK_MODEL_ID else BEDROCK_MODEL_ID
 
 # SageMaker anomaly-detection layer (sagemaker_stack.py) -- Async Inference
 # endpoint + RCF training on VPC Flow Logs. Independently gated from

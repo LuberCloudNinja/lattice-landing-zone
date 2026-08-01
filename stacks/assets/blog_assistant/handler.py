@@ -38,12 +38,23 @@ MAX_HISTORY_TURNS = int(os.environ.get("MAX_HISTORY_TURNS", "8"))
 
 SYSTEM_PROMPT = (
     "You are the assistant embedded in Luber J Guilarte Hay's portfolio blog about the "
-    "lattice-landing-zone project, a hybrid AWS landing zone built in CDK. Answer questions "
-    "about the project using the reference passages provided below. Explain things in plain, "
-    "direct sentences. Do not use em dashes or en dashes as punctuation, use periods and commas "
-    "instead. If the reference passages do not cover the question, say so honestly instead of "
-    "guessing, and suggest the visitor read the full blog post or the source code on GitHub. "
-    "Keep answers focused, a few sentences to a short paragraph, not an essay."
+    "lattice-landing-zone project, a hybrid AWS landing zone built in CDK. You are a genuine "
+    "expert in cloud architecture, AWS networking, security, containers, and the AI and machine "
+    "learning services used in this project. Visitors will ask two kinds of questions: some are "
+    "about this specific project (its stacks, its design decisions, why something was built a "
+    "certain way), and some are broader questions about the underlying technologies it uses, "
+    "such as VPC Lattice, Transit Gateway, Cloud WAN, PrivateLink, Gateway Load Balancer, "
+    "Bedrock, SageMaker, Kafka, ECS Fargate, or CDK in general. Reference passages retrieved from "
+    "this project's own documentation are provided below when available. Use them as the "
+    "authoritative source for anything about this specific project. For general questions about "
+    "the technologies themselves, beyond what the passages cover, answer from your own knowledge "
+    "of AWS and cloud architecture the same way you would in any technical conversation. Only say "
+    "you do not know when a question is genuinely unrelated to cloud, software, or this project, "
+    "and in that case suggest the visitor read the full blog post or the source code on GitHub. "
+    "Explain things in plain, direct sentences aimed at a technical reader. Do not use em dashes "
+    "or en dashes as punctuation, use periods and commas instead. Keep answers focused and "
+    "conversational, a few sentences to a couple of short paragraphs, going deeper when the "
+    "question is genuinely technical."
 )
 
 
@@ -82,13 +93,19 @@ def _save_history(conversation_id: str, history: list) -> None:
 
 
 def _retrieve(question: str) -> str:
-    resp = bedrock_agent_runtime.retrieve(
-        knowledgeBaseId=KNOWLEDGE_BASE_ID,
-        retrievalQuery={"text": question},
-        retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": 5}},
-    )
-    passages = [r.get("content", {}).get("text", "") for r in resp.get("retrievalResults", [])]
-    return "\n\n---\n\n".join(p for p in passages if p)
+    # Retrieval augments the answer, it does not gate it -- if the knowledge
+    # base call fails for any reason the assistant should still fall back to
+    # answering from general AWS/cloud knowledge rather than 500ing.
+    try:
+        resp = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            retrievalQuery={"text": question},
+            retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": 6}},
+        )
+        passages = [r.get("content", {}).get("text", "") for r in resp.get("retrievalResults", [])]
+        return "\n\n---\n\n".join(p for p in passages if p)
+    except Exception:
+        return ""
 
 
 def handler(event, context):
@@ -114,7 +131,9 @@ def handler(event, context):
         messages.append({"role": turn["role"], "content": [{"text": turn["text"]}]})
 
     grounded_question = (
-        f"Reference passages from the project documentation:\n\n{context_text}\n\n"
+        f"Reference passages from this project's own documentation (use these for anything "
+        f"specific to this project; answer from your own knowledge for general technology "
+        f"questions the passages do not cover):\n\n{context_text}\n\n"
         f"Visitor question: {question}"
         if context_text
         else question
@@ -125,7 +144,7 @@ def handler(event, context):
         modelId=MODEL_ID,
         system=[{"text": SYSTEM_PROMPT}],
         messages=messages,
-        inferenceConfig={"maxTokens": 700, "temperature": 0.3},
+        inferenceConfig={"maxTokens": 1100, "temperature": 0.4},
     )
     answer = response["output"]["message"]["content"][0]["text"]
 

@@ -162,7 +162,7 @@ class SecurityStack(Stack):
                         # Confirmed live: SemanticMemoryKnowledgeBase CREATE_FAILED with
                         # "no identity-based policy allows the s3vectors:QueryVectors action"
                         # despite KnowledgeBaseRole's own identity policy granting it.
-                        "bedrock:InvokeModel", "bedrock-agent-runtime:Retrieve",
+                        "bedrock:InvokeModel", "bedrock:Converse", "bedrock-agent-runtime:Retrieve",
                         "s3vectors:GetVectors", "s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetIndex",
                         "securityhub:GetFindings", "config:DescribeComplianceByConfigRule",
                         "networkmanager:GetCoreNetwork", "networkmanager:ListAttachments",
