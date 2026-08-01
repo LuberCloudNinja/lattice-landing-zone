@@ -1441,6 +1441,9 @@ SHELL_CSS = """
 .hero h1 { font-size: 40px; line-height: 1.12; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 10px; text-wrap: balance; }
 .hero-subtitle { font-size: 18px; line-height: 1.4; font-weight: 500; color: var(--accent-strong); margin: 0 0 20px; text-wrap: balance; max-width: 62ch; }
 .hero-dek { font-size: 17px; line-height: 1.65; color: var(--text-muted); max-width: 68ch; margin: 0 0 32px; }
+.hero-byline { font-size: 13px; color: var(--text-muted); margin: -8px 0 24px; }
+.hero-byline a { color: var(--accent); text-decoration: none; }
+.hero-byline a:hover { text-decoration: underline; }
 .vitals { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-width: 760px; }
 .vitals > div { background: var(--surface); padding: 16px 18px; }
 .vitals dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 6px; }
@@ -1476,6 +1479,8 @@ svg { display: block; width: 100%; min-width: 900px; height: auto; }
 .pattern-name { font-weight: 700; font-size: 15.5px; margin: 0 0 8px !important; }
 
 footer.page-footer { margin-top: 16px; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; max-width: 68ch; }
+footer.page-footer a { color: var(--accent); text-decoration: none; }
+footer.page-footer a:hover { text-decoration: underline; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
@@ -1605,6 +1610,7 @@ def build_html() -> str:
   <p class="hero-eyebrow">AWS CDK &middot; Python &middot; Self-Mutating Pipeline</p>
   <h1>Hybrid VPC Lattice Landing Zone</h1>
   <p class="hero-subtitle">A Multi-Region AWS Reference Architecture for Cloud WAN, VPC Lattice Service Mesh, Transit Gateway, and Agentic AI/ML-Driven Network Operations</p>
+  <p class="hero-byline">By <a href="https://github.com/LuberCloudNinja" target="_blank" rel="noopener noreferrer">Luber J Guilarte Hay</a> &middot; <a href="https://github.com/LuberCloudNinja/lattice-landing-zone" target="_blank" rel="noopener noreferrer">source on GitHub</a></p>
   <p class="hero-dek">{HERO_THESIS}</p>
   <dl class="vitals">{vitals_html}</dl>
 </header>
@@ -1612,7 +1618,7 @@ def build_html() -> str:
 <main>
 {sections}</main>
 <footer class="page-footer">
-  The CloudFront/S3 panel inside the first diagram shows how this page is delivered to your browser &mdash; it is not part of the depicted network. Service icons are the official AWS Architecture Icons where AWS ships one for that service, and hand-built icons in the identical visual language (same category colors) where it does not -- see diagram-site/aws_icons.py.
+  Built by <a href="https://github.com/LuberCloudNinja" target="_blank" rel="noopener noreferrer">Luber J Guilarte Hay</a>. The CloudFront/S3 panel inside the first diagram shows how this page is delivered to your browser &mdash; it is not part of the depicted network. Service icons are the official AWS Architecture Icons where AWS ships one for that service, and hand-built icons in the identical visual language (same category colors) where it does not -- see diagram-site/aws_icons.py.
 </footer>
 </div>
 </div>
