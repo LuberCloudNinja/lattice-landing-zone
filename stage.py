@@ -64,10 +64,6 @@ class LandingZoneStage(Stage):
         # of relying on retry timing.
         threetier.add_dependency(privatelink)
         lattice = LatticeStack(self, "LatticeStack", network=network, threetier=threetier, security=security)
-        observability = ObservabilityStack(
-            self, "ObservabilityStack",
-            inspection=inspection, threetier=threetier, lattice=lattice, security=security,
-        )
         ResourceGroupsStack(self, "ResourceGroupsStack")
         DiagramStack(self, "DiagramStack", security=security)
 
@@ -75,8 +71,18 @@ class LandingZoneStage(Stage):
         # alongside everything else (not gated behind a flag; unlike Cloud
         # WAN below, CloudTrail/Config/SecurityHub/GuardDuty at this scale
         # cost cents, not dollars).
-        GovernanceStack(self, "GovernanceStack", security=security)
+        governance = GovernanceStack(self, "GovernanceStack", security=security)
         drift_remediation = DriftRemediationStack(self, "DriftRemediationStack", network=network, security=security)
+
+        # ObservabilityStack deploys AFTER Governance/DriftRemediation now
+        # (used to deploy right after LatticeStack) -- its dashboard graphs
+        # governance_stack.py's custom metrics and drift_remediation_stack.py's
+        # Lambda directly, which needs both to already exist.
+        observability = ObservabilityStack(
+            self, "ObservabilityStack",
+            network=network, inspection=inspection, privatelink=privatelink, threetier=threetier, lattice=lattice,
+            governance=governance, drift_remediation=drift_remediation, security=security,
+        )
 
         if config.ENABLE_KAFKA:
             KafkaStack(self, "KafkaStack")
@@ -128,5 +134,5 @@ class LandingZoneStage(Stage):
             self, "AutoHealStack",
             network=network, threetier=threetier, security=security,
             drift_remediation=drift_remediation, observability=observability,
-            agentic_ai=agentic_ai, sagemaker=sagemaker,
+            agentic_ai=agentic_ai, sagemaker=sagemaker, cloudwan=cloudwan,
         )

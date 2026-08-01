@@ -44,6 +44,7 @@ import config
 from stacks.drift_remediation_stack import DriftRemediationStack
 from stacks.network_stack import NetworkStack
 from stacks.observability_stack import ObservabilityStack
+from stacks.sagemaker_stack import ENDPOINT_NAME as SAGEMAKER_ENDPOINT_NAME
 from stacks.security_stack import SecurityStack
 from stacks.threetier_stack import ThreeTierStack
 
@@ -55,7 +56,7 @@ class AutoHealStack(Stack):
         self, scope: Construct, construct_id: str, *,
         network: NetworkStack, threetier: ThreeTierStack, security: SecurityStack,
         drift_remediation: DriftRemediationStack, observability: ObservabilityStack,
-        agentic_ai=None, sagemaker=None, **kwargs,
+        agentic_ai=None, sagemaker=None, cloudwan=None, **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         Tags.of(self).add("Layer", config.Layer.REMEDIATION)
@@ -240,6 +241,32 @@ class AutoHealStack(Stack):
                     width=12, height=6,
                 ),
             )
+            observability.dashboard.add_widgets(
+                cw.GraphWidget(
+                    title="MCP tool Lambdas",
+                    left=[fn.metric_invocations() for fn in agentic_ai.tool_fns.values()],
+                    right=[fn.metric_errors() for fn in agentic_ai.tool_fns.values()],
+                    width=12, height=6,
+                ),
+                # Confirmed via research: SignInSuccesses/Throttles etc are
+                # available on a plain standard-tier User Pool (no Advanced
+                # Security/Threat Protection needed, which this project
+                # doesn't have enabled).
+                cw.GraphWidget(
+                    title="Agentic AI Cognito User Pool",
+                    left=[cw.Metric(
+                        namespace="AWS/Cognito", metric_name="SignInSuccesses",
+                        dimensions_map={"UserPool": agentic_ai.user_pool.user_pool_id, "UserPoolClient": agentic_ai.user_pool_client.user_pool_client_id},
+                        statistic="Sum",
+                    )],
+                    right=[cw.Metric(
+                        namespace="AWS/Cognito", metric_name="SignInThrottles",
+                        dimensions_map={"UserPool": agentic_ai.user_pool.user_pool_id, "UserPoolClient": agentic_ai.user_pool_client.user_pool_client_id},
+                        statistic="Sum",
+                    )],
+                    width=12, height=6,
+                ),
+            )
         if sagemaker is not None:
             observability.dashboard.add_widgets(
                 cw.GraphWidget(
@@ -253,6 +280,62 @@ class AutoHealStack(Stack):
                     left=[sagemaker.anomaly_findings_table.metric_consumed_write_capacity_units()],
                     width=12, height=6,
                 ),
+            )
+            # ENDPOINT_NAME is a fixed literal (sagemaker_stack.py's
+            # NAME_PREFIX + "endpoint") -- no cross-stack reference needed.
+            # Confirmed via research: Invocations/InvocationsPerInstance
+            # are explicitly NOT published for Async Inference endpoints;
+            # ApproximateBacklogSize*/ModelLatency/Invocation4XX/5XXErrors
+            # are the real ones. Queue-depth metrics need EndpointName
+            # alone; latency/error metrics need EndpointName+VariantName
+            # together (the "primary" variant name this project always
+            # uses -- see rcf_model_promoter/handler.py).
+            observability.dashboard.add_widgets(
+                cw.GraphWidget(
+                    title="RCF Async Inference endpoint -- queue depth",
+                    left=[cw.Metric(namespace="AWS/SageMaker", metric_name=m, dimensions_map={"EndpointName": SAGEMAKER_ENDPOINT_NAME}, statistic="Average")
+                          for m in ("ApproximateBacklogSize", "ApproximateBacklogSizePerInstance")],
+                    width=12, height=6,
+                ),
+                cw.GraphWidget(
+                    title="RCF Async Inference endpoint -- latency + errors",
+                    left=[cw.Metric(namespace="AWS/SageMaker", metric_name="ModelLatency", dimensions_map={"EndpointName": SAGEMAKER_ENDPOINT_NAME, "VariantName": "primary"}, statistic="Average")],
+                    right=[cw.Metric(namespace="AWS/SageMaker", metric_name=m, dimensions_map={"EndpointName": SAGEMAKER_ENDPOINT_NAME, "VariantName": "primary"}, statistic="Sum")
+                           for m in ("Invocation4XXErrors", "Invocation5XXErrors")],
+                    width=12, height=6,
+                ),
+            )
+
+        # ------------------------------------------------------------------
+        # Cloud WAN -- only when ENABLE_CLOUDWAN is on. Confirmed via
+        # research: AWS/NetworkManager namespace, dimension key is
+        # "CoreNetwork" (not "CoreNetworkId"), and per-edge-location
+        # metrics need the CoreNetwork+EdgeLocation dimension pair together
+        # -- graphed once per edge location (us-east-1 + config.SECOND_REGION)
+        # since a single metric can't span both.
+        # ------------------------------------------------------------------
+        if cloudwan is not None:
+            observability.dashboard.add_widgets(cw.TextWidget(markdown="# Cloud WAN", width=24, height=1))
+            core_network_id = cloudwan.core_network.attr_core_network_id
+            edge_traffic = []
+            for edge_location in (config.AWS_REGION, config.SECOND_REGION):
+                for metric_name in ("BytesIn", "BytesOut"):
+                    edge_traffic.append(cw.Metric(
+                        namespace="AWS/NetworkManager", metric_name=metric_name,
+                        dimensions_map={"CoreNetwork": core_network_id, "EdgeLocation": edge_location},
+                        statistic="Sum", label=f"{metric_name} ({edge_location})",
+                    ))
+            edge_drops = []
+            for edge_location in (config.AWS_REGION, config.SECOND_REGION):
+                for metric_name in ("PacketDropCountBlackhole", "PacketDropCountNoRoute"):
+                    edge_drops.append(cw.Metric(
+                        namespace="AWS/NetworkManager", metric_name=metric_name,
+                        dimensions_map={"CoreNetwork": core_network_id, "EdgeLocation": edge_location},
+                        statistic="Sum", label=f"{metric_name} ({edge_location})",
+                    ))
+            observability.dashboard.add_widgets(
+                cw.GraphWidget(title="Core Network traffic (both edge locations)", left=edge_traffic, width=12, height=6),
+                cw.GraphWidget(title="Core Network packet drops (both edge locations)", left=edge_drops, width=12, height=6),
             )
 
         CfnOutput(self, "AutoHealStateMachineArn", value=self.state_machine.state_machine_arn)

@@ -284,6 +284,58 @@ dashboard with AI/SageMaker/API Gateway/DynamoDB widgets.
   via the existing NAT-via-inspection path instead -- still TLS-encrypted,
   just not fully VPC-private for these 2 specific services.
 
+## Observability
+
+One CloudWatch dashboard (`lattice-lab`, `ObservabilityStack`'s `DashboardUrl`
+output), one section per architecture layer that has anything meaningful to
+graph -- 33 widgets total when every optional layer (`ENABLE_AI`/
+`ENABLE_SAGEMAKER`/`ENABLE_CLOUDWAN`) is on. `ObservabilityStack` owns the
+sections for unconditionally-deployed layers (Inspection, Lattice, ThreeTier,
+Network, PrivateLink, Governance, Drift Remediation) and deploys *after*
+`GovernanceStack`/`DriftRemediationStack` now (it used to deploy right after
+`LatticeStack`) so it can graph both directly. The optional layers'
+sections (Agentic AI, SageMaker, Cloud WAN) are added by `auto_heal_stack.py`
+instead, via the same `dashboard.add_widgets(...)` cross-stack construct
+mutation already established for the AI/SageMaker sections -- `auto_heal_
+stack.py` is deployed last, after every optional layer that might or might
+not exist by the time it runs.
+
+Every metric namespace/dimension below was verified (not guessed) before
+being wired up -- either already confirmed live earlier in this project
+(`AWS/VPN` `TunnelState`+`VpnId`) or via a dedicated research pass for this
+expansion:
+
+- **Network**: VPN tunnel state; Transit Gateway traffic + packet drops
+  (`AWS/TransitGateway`); the managed `AppNatGateway`'s real `AWS/NATGateway`
+  metrics; the *self-managed EC2* inspection NAT instance's `AWS/EC2`
+  metrics instead (confirmed: `AWS/NATGateway` does NOT apply to a
+  self-managed EC2 NAT instance, only the managed NAT Gateway resource type).
+- **PrivateLink**: provider NLB health + traffic (`AWS/NetworkELB` -- same
+  ARN-suffix dimension extraction as GWLB/ALB, confirmed identical).
+- **Governance**: CloudTrail has no native "event volume over time" metric
+  (a `LogQueryWidget` against the trail's log group instead); Config/
+  Security Hub/GuardDuty have no native "findings/non-compliant-resources
+  over time" metric at all (confirmed via research) -- `governance_stack.py`
+  now runs a `governance-metrics-publisher` Lambda every 15 minutes that
+  polls all three and `PutMetricData`s into a custom `LatticeLab/Governance`
+  namespace, which the dashboard graphs like any other metric.
+- **Drift Remediation**: `drift-remediator` Lambda invocations/errors +
+  `governance-alerts` SNS publish volume.
+- **Agentic AI**: agent-orchestrator + MCP tool Lambda invocations/errors,
+  working-memory DynamoDB, API Gateway request/4xx/5xx, Cognito sign-in
+  activity, and a link to AgentCore's own GenAI Observability console
+  (its per-resource CloudWatch dimensions aren't pinned down in public docs
+  yet, so this links out rather than guessing a `dimensions_map` that could
+  silently render an empty graph).
+- **SageMaker**: pipeline Lambda invocations, anomaly-findings DynamoDB
+  writes, and the RCF Async Inference endpoint's real queue-depth/latency/
+  error metrics (confirmed via research which `AWS/SageMaker` metrics
+  actually publish for *Async* endpoints specifically -- `Invocations`/
+  `InvocationsPerInstance` are explicitly NOT published for async, unlike
+  real-time endpoints).
+- **Cloud WAN**: Core Network traffic + packet drops per edge location
+  (`AWS/NetworkManager`, dimension key is `CoreNetwork` not `CoreNetworkId`).
+
 ## Verify (per layer)
 
 **Network / VPN** -- from an SSM session on `ThreeTierStack`'s

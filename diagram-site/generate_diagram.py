@@ -440,7 +440,7 @@ def build_governance_svg() -> str:
     governed by docs/inspection-architecture-reference.md Section 6's exact
     grid/assertion spec for a single, narrow purpose (the GWLB/firewall/TGW
     traffic path); this is a different concern entirely."""
-    w, h = 1600, 520
+    w, h = 1600, 692
     services, flows, boundaries = [], [], []
 
     trail_x, trail_y = 40, 148
@@ -504,6 +504,35 @@ def build_governance_svg() -> str:
     services.append(service_box(heal_sns_x, sfn_y, 200, 56, "SNS: governance-alerts", icon_bucket, sub="same topic as above -- before + after"))
     flows.append(orthogonal_path([(remediate_x + 200, sfn_y + 28), (heal_sns_x, sfn_y + 28)], "north-south", bidirectional=False))
 
+    # ------------------------------------------------------------------
+    # Governance metrics (governance_stack.py) -- a THIRD, independent loop:
+    # Config/Security Hub/GuardDuty have no native "findings over time"
+    # CloudWatch metric (confirmed via research), so a scheduled Lambda
+    # polls all three and PutMetricData's a custom namespace the
+    # lattice-lab dashboard graphs directly.
+    # ------------------------------------------------------------------
+    metrics_y = 596
+    boundaries.append(boundary(40, metrics_y - 24, 1520, 96, "governance_stack.py -- custom dashboard metrics (every 15min)", small=True))
+
+    schedule_x = 80
+    services.append(service_box(schedule_x, metrics_y + 16, 200, 56, "EventBridge (rate 15min)", icon_gateway))
+
+    metrics_lambda_x = schedule_x + 240
+    services.append(service_box(metrics_lambda_x, metrics_y + 16, 220, 56, "governance-metrics-publisher", icon_server, sub="read-only Config/SecurityHub/GuardDuty"))
+    flows.append(orthogonal_path([(schedule_x + 200, metrics_y + 44), (metrics_lambda_x, metrics_y + 44)], "north-south", bidirectional=False))
+    for label, dy in detect_labels:
+        flows.append(orthogonal_path(
+            [(detect_x + 80, dy + 64), (detect_x + 80, metrics_y + 44), (metrics_lambda_x, metrics_y + 44)],
+            "north-south", dashed=True, bidirectional=False))
+
+    cw_metrics_x = metrics_lambda_x + 260
+    services.append(service_box(cw_metrics_x, metrics_y + 16, 240, 56, "CloudWatch: LatticeLab/Governance", icon_bucket, sub="custom namespace, PutMetricData"))
+    flows.append(orthogonal_path([(metrics_lambda_x + 220, metrics_y + 44), (cw_metrics_x, metrics_y + 44)], "north-south", bidirectional=False))
+
+    dashboard_x = cw_metrics_x + 280
+    services.append(service_box(dashboard_x, metrics_y + 16, 200, 56, "lattice-lab dashboard", icon_lb, sub="1 widget per architecture layer"))
+    flows.append(orthogonal_path([(cw_metrics_x + 240, metrics_y + 44), (dashboard_x, metrics_y + 44)], "north-south", bidirectional=False))
+
     defs = "\n".join(
         f'<marker id="marker-arrow-{cls}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
         f'<path d="M0 0 L10 5 L0 10 z" class="marker-{cls}"/></marker>'
@@ -511,7 +540,7 @@ def build_governance_svg() -> str:
     )
     return f'''<svg viewBox="0 0 {w} {h}" role="img" aria-labelledby="gov-diagram-title gov-diagram-desc" xmlns="http://www.w3.org/2000/svg">
   <title id="gov-diagram-title">Governance and drift-remediation flow</title>
-  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout. A second, independent loop (auto_heal_stack.py) watches 3 named alarms -- VPN tunnel down, Lattice target unhealthy, Bedrock throttling -- and runs a Step Functions Notify-Remediate-Notify sequence against the one specific resource each alarm names, publishing to the same SNS topic before and after.</desc>
+  <desc id="gov-diagram-desc">CloudTrail feeds AWS Config, Security Hub, and GuardDuty for detection, and an EventBridge rule for mutating API calls made outside the pipeline. That rule triggers a Lambda which checks resource and principal tags before ever deleting anything, and publishes alerts to SNS by email throughout. A second, independent loop (auto_heal_stack.py) watches 3 named alarms -- VPN tunnel down, Lattice target unhealthy, Bedrock throttling -- and runs a Step Functions Notify-Remediate-Notify sequence against the one specific resource each alarm names, publishing to the same SNS topic before and after. A third, independent loop polls Config/Security Hub/GuardDuty every 15 minutes (none of the three publish a native "findings over time" CloudWatch metric) and writes a custom LatticeLab/Governance metric the lattice-lab dashboard graphs directly.</desc>
   <defs>{defs}</defs>
   <g id="gov-boundaries">{"".join(boundaries)}</g>
   <g id="gov-services">{"".join(services)}</g>

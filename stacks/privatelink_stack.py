@@ -176,14 +176,14 @@ class PrivateLinkStack(Stack):
         nlb_sg.add_ingress_rule(
             ec2.Peer.ipv4(provider_vpc.vpc_cidr_block), ec2.Port.tcp(PROVIDER_PORT), "provider-vpc"
         )
-        nlb = elbv2.NetworkLoadBalancer(
+        self.nlb = nlb = elbv2.NetworkLoadBalancer(
             self, "ProviderNlb",
             vpc=provider_vpc,
             internet_facing=False,
             vpc_subnets=ec2.SubnetSelection(subnet_group_name="Private"),
             security_groups=[nlb_sg],
         )
-        provider_target_group = elbv2.NetworkTargetGroup(
+        self.provider_target_group = provider_target_group = elbv2.NetworkTargetGroup(
             self, "ProviderTargetGroup",
             vpc=provider_vpc,
             port=PROVIDER_PORT,

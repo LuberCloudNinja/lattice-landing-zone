@@ -307,7 +307,7 @@ class AgenticAiStack(Stack):
         # ------------------------------------------------------------------
         # MCP tool Lambdas.
         # ------------------------------------------------------------------
-        tool_fns: dict[str, lambda_.Function] = {}
+        self.tool_fns = tool_fns = {}
         tool_sg = ec2.SecurityGroup(
             self, "McpToolSg", vpc=vpc, description="MCP tool Lambdas -- outbound only", allow_all_outbound=True,
         )
@@ -555,7 +555,7 @@ class AgenticAiStack(Stack):
 
         self.http_api = http_api = apigwv2.HttpApi(self, "AgentApi", api_name="agentic-ai-api", create_default_stage=True)
 
-        user_pool = cognito.UserPool(
+        self.user_pool = user_pool = cognito.UserPool(
             self, "AgentApiUserPool",
             user_pool_name="agentic-ai-api-users",
             self_sign_up_enabled=False,
@@ -565,7 +565,7 @@ class AgenticAiStack(Stack):
             ),
             removal_policy=RemovalPolicy.DESTROY,
         )
-        user_pool_client = user_pool.add_client("AgentApiUserPoolClient", generate_secret=False)
+        self.user_pool_client = user_pool_client = user_pool.add_client("AgentApiUserPoolClient", generate_secret=False)
         jwt_authorizer = apigwv2_authorizers.HttpJwtAuthorizer(
             "AgentApiJwtAuthorizer",
             jwt_issuer=user_pool.user_pool_provider_url,

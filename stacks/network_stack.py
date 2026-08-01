@@ -181,7 +181,7 @@ class NetworkStack(Stack):
         # ------------------------------------------------------------------
         nat_eip = ec2.CfnEIP(self, "AppNatEip", domain="vpc")
         app_public_subnet_ids = self.app_vpc.select_subnets(subnet_group_name="Public").subnet_ids
-        nat_gateway = ec2.CfnNatGateway(
+        self.nat_gateway = nat_gateway = ec2.CfnNatGateway(
             self, "AppNatGateway",
             subnet_id=app_public_subnet_ids[0],
             allocation_id=nat_eip.attr_allocation_id,

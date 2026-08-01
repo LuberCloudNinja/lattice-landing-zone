@@ -14,12 +14,17 @@ where the org-wide delegated-admin/SCP/Control Tower version of this
 pattern lives, for a management account this lab doesn't have.
 """
 
+from pathlib import Path
+
 import aws_cdk as cdk
-from aws_cdk import CfnOutput, RemovalPolicy, Stack, Tags
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, Tags
 from aws_cdk import aws_config as awsconfig
 from aws_cdk import aws_cloudtrail as cloudtrail
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_guardduty as guardduty
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_securityhub as securityhub
@@ -28,6 +33,9 @@ from constructs import Construct
 
 import config
 from stacks.security_stack import SecurityStack
+
+ASSETS_DIR = Path(__file__).parent / "assets" / "governance_metrics"
+METRICS_NAMESPACE = "LatticeLab/Governance"
 
 # Standards ARNs are region-templated, not account-templated -- these are
 # AWS-owned standard definitions, not account resources.
@@ -73,7 +81,7 @@ class GovernanceStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
-        trail_log_group = logs.LogGroup(
+        self.trail_log_group = trail_log_group = logs.LogGroup(
             self, "CloudTrailLogGroup",
             retention=logs.RetentionDays.ONE_MONTH,
             encryption_key=security.logs_key,
@@ -198,6 +206,53 @@ class GovernanceStack(Stack):
         if ENABLE_GUARDDUTY:
             guardduty.CfnDetector(self, "GuardDutyDetector", enable=True)
 
+        # ------------------------------------------------------------------
+        # Governance metrics -- Config/Security Hub/GuardDuty have no native
+        # CloudWatch "findings/non-compliant-resources over time" metric
+        # (confirmed via research: Config's own AWS/Config namespace is
+        # usage-only; Security Hub and GuardDuty have no findings-count
+        # namespace at all). Publishing to a well-known custom namespace
+        # here means observability_stack.py can graph these by plain
+        # namespace/metric-name string, no cross-stack construct reference
+        # needed regardless of stack deploy order.
+        # ------------------------------------------------------------------
+        metrics_role = iam.Role(
+            self, "GovernanceMetricsRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            permissions_boundary=security.permissions_boundary,
+            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")],
+        )
+        metrics_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "config:DescribeComplianceByConfigRule",
+                "securityhub:GetFindings",
+                "guardduty:ListDetectors", "guardduty:ListFindings",
+                "cloudwatch:PutMetricData",
+            ],
+            resources=["*"],
+        ))
+        metrics_log_group = logs.LogGroup(
+            self, "GovernanceMetricsLogGroup",
+            retention=logs.RetentionDays.ONE_MONTH, encryption_key=security.logs_key, removal_policy=RemovalPolicy.DESTROY,
+        )
+        self.metrics_fn = lambda_.Function(
+            self, "GovernanceMetricsPublisher",
+            function_name="governance-metrics-publisher",
+            description="Every 15min: polls Config/Security Hub/GuardDuty, PutMetricData into LatticeLab/Governance.",
+            runtime=lambda_.Runtime.PYTHON_3_13,
+            architecture=lambda_.Architecture.ARM_64,
+            handler="handler.handler",
+            code=lambda_.Code.from_asset(str(ASSETS_DIR)),
+            timeout=Duration.seconds(60),
+            role=metrics_role,
+            log_group=metrics_log_group,
+        )
+        events.Rule(
+            self, "GovernanceMetricsSchedule",
+            schedule=events.Schedule.rate(Duration.minutes(15)),
+            targets=[targets.LambdaFunction(self.metrics_fn)],
+        )
+
         CfnOutput(self, "CloudTrailArn", value=self.trail.trail_arn)
         CfnOutput(self, "ConfigBucketName", value=config_bucket.bucket_name)
         CfnOutput(self, "SecurityHubHubArn", value=hub.attr_arn)
@@ -217,6 +272,13 @@ class GovernanceStack(Stack):
                 reason="config_bucket.grant_write()/security.buckets_key.grant_encrypt_decrypt() are "
                        "CDK-generated grants scoped to this specific bucket/key ARNs -- any wildcard is "
                        "in the /* object-path suffix CDK adds for S3 write grants, not an unscoped "
-                       "resource.",
+                       "resource. GovernanceMetricsRole's config:Describe*/securityhub:GetFindings/"
+                       "guardduty:List* are read-only, account-wide APIs with no resource-level ARN to "
+                       "scope to; cloudwatch:PutMetricData is inherently unscoped (metric namespaces "
+                       "aren't ARN resources) -- the real control is the read-only action allow-list.",
+            ),
+            NagPackSuppression(
+                id="AwsSolutions-L1",
+                reason="PYTHON_3_13 is the latest available managed Lambda runtime as of this build.",
             ),
         ])

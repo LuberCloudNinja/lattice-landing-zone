@@ -199,6 +199,11 @@ class SecurityStack(Stack):
                         "s3:PutObjectLegalHold", "s3:PutObjectRetention", "s3:PutObjectTagging", "s3:PutObjectVersionTagging",
                         "states:StartExecution",
                         "xray:GetSamplingRules", "xray:GetSamplingTargets", "xray:PutTelemetryRecords", "xray:PutTraceSegments",
+                        # governance_stack.py's GovernanceMetricsPublisher Lambda (observability
+                        # expansion: Config/Security Hub/GuardDuty have no native "findings over
+                        # time" CloudWatch metric, so this project polls each and PutMetricData's
+                        # a custom one).
+                        "guardduty:ListDetectors", "guardduty:ListFindings",
                     ],
                     resources=["*"],
                 ),
