@@ -271,6 +271,18 @@ dashboard with AI/SageMaker/API Gateway/DynamoDB widgets.
   until the first weekly training run completes and gets promoted -- a
   bootstrapping gap inherent to any from-scratch MLOps pipeline, not
   something CDK can route around.
+- **No VPC interface endpoints for bedrock-runtime/bedrock-agentcore.**
+  Both consistently failed with "private-dns-enabled cannot be set because
+  there is already a conflicting DNS domain" -- but only when CloudFormation
+  created them as part of `AgenticAiStack`; 6 consecutive identical
+  failures across clean-state retries (no leftover VPC endpoints or
+  Route53 private hosted zones between attempts), while isolated direct
+  `aws ec2 create-vpc-endpoint` calls for the exact same service/VPC
+  succeeded every time. Same "reproducible, opaque, no further AWS-side
+  diagnostic detail available" shape as the Cloud WAN TGW-attachment gap
+  above. The agent-orchestrator/MCP-tool Lambdas that call Bedrock reach it
+  via the existing NAT-via-inspection path instead -- still TLS-encrypted,
+  just not fully VPC-private for these 2 specific services.
 
 ## Verify (per layer)
 

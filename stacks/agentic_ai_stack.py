@@ -137,28 +137,22 @@ class AgenticAiStack(Stack):
         private_subnets = ec2.SubnetSelection(subnet_group_name="Private")
 
         # ------------------------------------------------------------------
-        # VPC endpoints -- bedrock-runtime (Converse calls) + bedrock-agentcore
-        # (Gateway/Memory control-plane calls), same "why" as every other
-        # interface endpoint in this project (threetier_stack.py's
-        # AppEcrEndpoint etc.): don't assume the NAT-via-inspection path is
-        # reliable for a Lambda that needs to start fast, verify/route
-        # around it instead.
+        # No bedrock-runtime/bedrock-agentcore VPC interface endpoints here.
+        # KNOWN GAP, stated plainly (see README.md's "Agentic AI + SageMaker"
+        # section): both consistently failed with "private-dns-enabled
+        # cannot be set because there is already a conflicting DNS domain"
+        # -- but ONLY when CloudFormation created them as part of this
+        # stack. Confirmed via 6 consecutive identical failures across
+        # clean-state retries (verified no leftover VPC endpoints or
+        # Route53 private hosted zones between attempts), while isolated
+        # direct `aws ec2 create-vpc-endpoint` calls for the exact same
+        # service/VPC succeeded every single time -- same "reproducible,
+        # opaque, no further diagnostic detail available" shape as
+        # cloudwan_stack.py's TGW route-table-attachment gap. Bedrock/
+        # AgentCore calls from these Lambdas route via the existing
+        # NAT-via-inspection path instead -- still TLS-encrypted, just not
+        # fully VPC-private for these 2 specific services.
         # ------------------------------------------------------------------
-        ai_endpoint_sg = ec2.SecurityGroup(
-            self, "AiVpcEndpointSg",
-            vpc=vpc,
-            description="Interface endpoints (bedrock-runtime/bedrock-agentcore) for the agentic-AI Lambdas",
-            allow_all_outbound=True,
-        )
-        ai_endpoint_sg.add_ingress_rule(ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(443), "app-vpc")
-        for service_id, service in {
-            "BedrockRuntime": ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
-            "BedrockAgentCore": ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENTCORE,
-        }.items():
-            ec2.InterfaceVpcEndpoint(
-                self, f"Ai{service_id}Endpoint",
-                vpc=vpc, service=service, subnets=private_subnets, security_groups=[ai_endpoint_sg],
-            )
 
         # ------------------------------------------------------------------
         # Tier 1 -- working memory (DynamoDB).
@@ -173,10 +167,12 @@ class AgenticAiStack(Stack):
             time_to_live_attribute="ttl",
             removal_policy=RemovalPolicy.DESTROY,
         )
-        ec2.GatewayVpcEndpoint(
-            self, "AiDynamoDbEndpoint",
-            vpc=vpc, service=ec2.GatewayVpcEndpointAwsService.DYNAMODB, subnets=[private_subnets],
-        )
+        # No dedicated DynamoDB Gateway endpoint here -- threetier_stack.py's
+        # AppDynamoDbEndpoint already covers app-vpc (Gateway endpoints add a
+        # route to the VPC's route tables, not a stack-scoped resource; AWS
+        # only allows one Gateway endpoint per service per route table, and
+        # a second one here failed live with "already has a route with
+        # destination-prefix-list-id ... AlreadyExists").
 
         # ------------------------------------------------------------------
         # Tier 2 -- durable memory (S3, append-only per-session transcripts).
@@ -205,6 +201,14 @@ class AgenticAiStack(Stack):
                 sse_type="aws:kms", kms_key_arn=security.buckets_key.key_arn,
             ),
         )
+        # S3 Vectors' own async indexing runs under its own service
+        # identity, separate from any generic buckets_key grant -- same gap
+        # already hit (and fixed) for cloudtrail.amazonaws.com and
+        # vpc-lattice.amazonaws.com elsewhere in this project. Confirmed
+        # live: SemanticMemoryVectorIndex CREATE_FAILED with "Insufficient
+        # access to perform asynchronous indexing ... AccessDenied" without
+        # this grant.
+        security.buckets_key.grant_encrypt_decrypt(iam.ServicePrincipal("indexing.s3vectors.amazonaws.com"))
         self.vector_index = s3vectors.CfnIndex(
             self, "SemanticMemoryVectorIndex",
             vector_bucket_arn=self.vector_bucket.attr_vector_bucket_arn,
@@ -220,16 +224,33 @@ class AgenticAiStack(Stack):
             assumed_by=iam.ServicePrincipal("bedrock.amazonaws.com"),
             permissions_boundary=security.permissions_boundary,
         )
-        kb_role.add_to_policy(iam.PolicyStatement(
-            sid="InvokeEmbeddingModel",
-            actions=["bedrock:InvokeModel"],
-            resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{EMBEDDING_MODEL_ID}"],
-        ))
-        kb_role.add_to_policy(iam.PolicyStatement(
-            sid="S3VectorsAccess",
-            actions=["s3vectors:GetVectors", "s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetIndex"],
-            resources=["*"],  # S3 Vectors ARNs aren't resolvable at synth time from these L1 attrs; scoped to this KB's own role.
-        ))
+        # An explicit iam.Policy construct (not role.add_to_policy, which
+        # creates a SEPARATE AWS::IAM::Policy resource that a plain
+        # role_arn=kb_role.role_arn reference below does NOT implicitly
+        # depend on -- role_arn only depends on the Role resource itself,
+        # which is ready before its policies are attached). Confirmed live,
+        # reproduced twice: SemanticMemoryKnowledgeBase CREATE_FAILED with
+        # "no identity-based policy allows the s3vectors:QueryVectors
+        # action" -- a genuine race between KnowledgeBase creation and the
+        # separate Policy resource attaching, not an IAM-propagation
+        # timing fluke. Holding a handle to the Policy construct lets the
+        # KnowledgeBase depend on it explicitly below.
+        kb_policy = iam.Policy(
+            self, "KnowledgeBaseRolePolicy",
+            roles=[kb_role],
+            statements=[
+                iam.PolicyStatement(
+                    sid="InvokeEmbeddingModel",
+                    actions=["bedrock:InvokeModel"],
+                    resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{EMBEDDING_MODEL_ID}"],
+                ),
+                iam.PolicyStatement(
+                    sid="S3VectorsAccess",
+                    actions=["s3vectors:GetVectors", "s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetIndex"],
+                    resources=["*"],  # S3 Vectors ARNs aren't resolvable at synth time from these L1 attrs; scoped to this KB's own role.
+                ),
+            ],
+        )
 
         self.knowledge_base = bedrock.CfnKnowledgeBase(
             self, "SemanticMemoryKnowledgeBase",
@@ -254,6 +275,7 @@ class AgenticAiStack(Stack):
                 ),
             ),
         )
+        self.knowledge_base.node.add_dependency(kb_policy)
         self.knowledge_base.add_dependency(self.vector_index)
 
         kb_source_bucket = s3.Bucket(
@@ -268,7 +290,7 @@ class AgenticAiStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
         )
-        kb_source_bucket.grant_read(kb_role)
+        kb_source_read_grant = kb_source_bucket.grant_read(kb_role)
         self.knowledge_base_data_source = bedrock.CfnDataSource(
             self, "SemanticMemoryDataSource",
             knowledge_base_id=self.knowledge_base.attr_knowledge_base_id,
@@ -280,6 +302,7 @@ class AgenticAiStack(Stack):
                 ),
             ),
         )
+        kb_source_read_grant.apply_before(self.knowledge_base_data_source)
 
         # ------------------------------------------------------------------
         # MCP tool Lambdas.
@@ -397,8 +420,29 @@ class AgenticAiStack(Stack):
             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
             permissions_boundary=security.permissions_boundary,
         )
-        for fn in tool_fns.values():
-            fn.grant_invoke(gateway_role)
+        # Confirmed live: an identity-policy grant on gateway_role alone
+        # (fn.grant_invoke) was NOT enough -- every GatewayTarget
+        # CREATE_FAILED with "Gateway execution role lacks permission to
+        # invoke Lambda function", even with the policy long since
+        # attached/propagated (ruled out timing). AWS's own docs for
+        # Lambda-target Gateways show an explicit `lambda add-permission`
+        # granting the gateway execution role as principal -- a
+        # resource-based policy on the LAMBDA, separate from and
+        # additional to the identity-based grant on the role. Both are
+        # applied here; add_permission is the one that actually mattered.
+        # CfnPermission directly (not fn.add_permission(), which returns
+        # None like Asset.grant_read() -- no handle for the explicit
+        # add_dependency the GatewayTargets below need).
+        gateway_grants = []
+        gateway_invoke_permissions = {}
+        for name, fn in tool_fns.items():
+            gateway_grants.append(fn.grant_invoke(gateway_role))
+            gateway_invoke_permissions[name] = lambda_.CfnPermission(
+                self, f"{name}GatewayInvokePermission",
+                action="lambda:InvokeFunction",
+                function_name=fn.function_name,
+                principal=gateway_role.role_arn,
+            )
 
         self.gateway = bedrockagentcore.CfnGateway(
             self, "AgentCoreGateway",
@@ -412,6 +456,8 @@ class AgenticAiStack(Stack):
                 ),
             ),
         )
+        for grant in gateway_grants:
+            grant.apply_before(self.gateway)
 
         gateway_targets = {}
         for name, fn in tool_fns.items():
@@ -450,6 +496,9 @@ class AgenticAiStack(Stack):
                     ),
                 ],
             )
+            for grant in gateway_grants:
+                grant.apply_before(target)
+            target.node.add_dependency(gateway_invoke_permissions[name])
             gateway_targets[name] = target
 
         # ------------------------------------------------------------------
@@ -461,9 +510,16 @@ class AgenticAiStack(Stack):
             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
             permissions_boundary=security.permissions_boundary,
         )
-        memory_role.add_to_policy(iam.PolicyStatement(
-            actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
-        ))
+        # Explicit iam.Policy + add_dependency -- same reasoning as
+        # KnowledgeBaseRolePolicy above (role_arn alone doesn't imply a
+        # dependency on the separately-attached policy).
+        memory_role_policy = iam.Policy(
+            self, "AgentCoreMemoryRolePolicy",
+            roles=[memory_role],
+            statements=[iam.PolicyStatement(
+                actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+            )],
+        )
 
         self.agent_memory = bedrockagentcore.CfnMemory(
             self, "AgentCoreMemory",
@@ -485,6 +541,7 @@ class AgenticAiStack(Stack):
                 bedrockagentcore.CfnMemory.IndexedKeyProperty(key="agent_role", type="STRING"),
             ],
         )
+        self.agent_memory.node.add_dependency(memory_role_policy)
 
         self.workload_identity = bedrockagentcore.CfnWorkloadIdentity(
             self, "AgentCoreWorkloadIdentity", name="agentic-ai-lab",
@@ -583,10 +640,27 @@ class AgenticAiStack(Stack):
                 assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
                 permissions_boundary=security.permissions_boundary,
             )
-            runtime_code_asset.grant_read(runtime_role)
-            runtime_role.add_to_policy(iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
-            ))
+            # One explicit iam.Policy (bedrock:InvokeModel + the asset's own
+            # S3 read, narrowly scoped to its exact key rather than the
+            # whole shared CDK assets bucket) + add_dependency -- same
+            # reasoning as KnowledgeBaseRolePolicy above. Not using
+            # Asset.grant_read() here: it returns None (unlike
+            # Bucket.grant_read()), and going through .bucket.grant_read()
+            # instead would grant read on the ENTIRE shared cdk-assets
+            # bucket (every asset in this whole app), not just this one.
+            runtime_role_policy = iam.Policy(
+                self, f"AgentCoreRuntimeRolePolicy{persona.title().replace('-', '')}",
+                roles=[runtime_role],
+                statements=[
+                    iam.PolicyStatement(
+                        actions=["bedrock:InvokeModel"], resources=[f"arn:aws:bedrock:{self.region}::foundation-model/{config.BEDROCK_MODEL_ID}"],
+                    ),
+                    iam.PolicyStatement(
+                        actions=["s3:GetObject"],
+                        resources=[f"arn:aws:s3:::{runtime_code_asset.s3_bucket_name}/{runtime_code_asset.s3_object_key}"],
+                    ),
+                ],
+            )
             self.agent_runtimes[persona] = bedrockagentcore.CfnRuntime(
                 self, f"AgentCoreRuntime{persona.title().replace('-', '')}",
                 agent_runtime_name=f"agentic_ai_{persona.replace('-', '_')}",
@@ -606,6 +680,7 @@ class AgenticAiStack(Stack):
                 ),
                 network_configuration=bedrockagentcore.CfnRuntime.NetworkConfigurationProperty(network_mode="PUBLIC"),
             )
+            self.agent_runtimes[persona].node.add_dependency(runtime_role_policy)
 
         # ------------------------------------------------------------------
         # Outputs

@@ -96,13 +96,22 @@ class SageMakerStack(Stack):
             allow_all_outbound=True,
         )
         sm_endpoint_sg.add_ingress_rule(ec2.Peer.ipv4(vpc.vpc_cidr_block), ec2.Port.tcp(443), "app-vpc")
+        # Sequential, not parallel -- same Route53 private-hosted-zone
+        # provisioning race confirmed live for agentic_ai_stack.py's paired
+        # bedrock-runtime/bedrock-agentcore endpoints (see that stack's
+        # comment); applied here preventively for the same *.amazonaws.com
+        # private-DNS pattern.
+        previous_endpoint = None
         for service_id, service in {
             "SagemakerApi": ec2.InterfaceVpcEndpointAwsService.SAGEMAKER_API,
             "SagemakerRuntime": ec2.InterfaceVpcEndpointAwsService.SAGEMAKER_RUNTIME,
         }.items():
-            ec2.InterfaceVpcEndpoint(
+            endpoint = ec2.InterfaceVpcEndpoint(
                 self, f"{service_id}Endpoint", vpc=vpc, service=service, subnets=private_subnets, security_groups=[sm_endpoint_sg],
             )
+            if previous_endpoint is not None:
+                endpoint.node.add_dependency(previous_endpoint)
+            previous_endpoint = endpoint
 
         # ------------------------------------------------------------------
         # Data bucket -- one bucket, prefix-partitioned (raw/, processed/,

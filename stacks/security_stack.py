@@ -156,8 +156,58 @@ class SecurityStack(Stack):
                         "dynamodb:DescribeTable", "dynamodb:ListTagsOfResource", "dynamodb:DeleteTable",
                         "sns:Publish", "sns:ListTagsForResource", "sns:DeleteTopic",
                         "lambda:GetFunction", "lambda:ListTags", "lambda:DeleteFunction",
+                        # agentic_ai_stack.py / sagemaker_stack.py / auto_heal_stack.py's own
+                        # actual runtime needs -- same "the boundary is a hard ceiling, add
+                        # what each role actually calls" lesson as the ENI actions above.
+                        # Confirmed live: SemanticMemoryKnowledgeBase CREATE_FAILED with
+                        # "no identity-based policy allows the s3vectors:QueryVectors action"
+                        # despite KnowledgeBaseRole's own identity policy granting it.
+                        "bedrock:InvokeModel", "bedrock-agent-runtime:Retrieve",
+                        "s3vectors:GetVectors", "s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetIndex",
+                        "securityhub:GetFindings", "config:DescribeComplianceByConfigRule",
+                        "networkmanager:GetCoreNetwork", "networkmanager:ListAttachments",
+                        "codecommit:GetBranch", "codecommit:CreateBranch", "codecommit:CreateCommit", "codecommit:CreatePullRequest",
+                        "sagemaker:CreateModel", "sagemaker:CreateEndpointConfig", "sagemaker:CreateEndpoint", "sagemaker:UpdateEndpoint",
+                        "sagemaker:DescribeEndpoint", "sagemaker:DescribeEndpointConfig", "sagemaker:DeleteModel", "sagemaker:DeleteEndpointConfig",
+                        "sagemaker:DeleteEndpoint", "sagemaker:ListEndpoints", "sagemaker:ListEndpointConfigs", "sagemaker:ListModels",
+                        "sagemaker:CreateTrainingJob", "sagemaker:CreateTransformJob",
+                        "application-autoscaling:RegisterScalableTarget", "application-autoscaling:PutScalingPolicy",
+                        "application-autoscaling:DeregisterScalableTarget",
+                        "ec2:RebootInstances",
+                        # Ground-truth audit round 2: the first audit only scanned this
+                        # project's own literal actions=[...] lists, which missed every
+                        # action a CDK .grant_*() helper generates internally (e.g.
+                        # fn.grant_invoke() -> lambda:InvokeFunction, TableV2.
+                        # grant_read_write_data() -> the dynamodb:Batch*/GetRecords/
+                        # GetShardIterator/ConditionCheckItem actions, bucket.grant_read_
+                        # write() -> the s3:GetObject*/GetBucket*/List*/DeleteObject*/
+                        # PutObject{LegalHold,Retention,Tagging,VersionTagging} actions,
+                        # state_machine.grant_start_execution() -> states:StartExecution).
+                        # Found by diffing the boundary against the ACTUAL synthesized
+                        # AWS::IAM::Policy resources across agentic_ai_stack.py/
+                        # sagemaker_stack.py/auto_heal_stack.py, not by re-reading source.
+                        # Confirmed live: every GatewayTarget CREATE_FAILED with "Gateway
+                        # execution role lacks permission to invoke Lambda function" even
+                        # with both an identity-policy grant AND a Lambda resource policy
+                        # in place -- the boundary's missing lambda:InvokeFunction was the
+                        # real remaining blocker. xray:* is X-Ray tracing on
+                        # AutoHealStack's state machine (tracing_enabled=True).
+                        "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem",
+                        "dynamodb:GetRecords", "dynamodb:GetShardIterator",
+                        "lambda:InvokeFunction",
+                        "s3:Abort*", "s3:DeleteObject*", "s3:GetBucket*", "s3:GetObject*", "s3:List*",
+                        "s3:PutObjectLegalHold", "s3:PutObjectRetention", "s3:PutObjectTagging", "s3:PutObjectVersionTagging",
+                        "states:StartExecution",
+                        "xray:GetSamplingRules", "xray:GetSamplingTargets", "xray:PutTelemetryRecords", "xray:PutTraceSegments",
                     ],
                     resources=["*"],
+                ),
+                iam.PolicyStatement(
+                    sid="AllowScopedPassRoleToSageMaker",
+                    effect=iam.Effect.ALLOW,
+                    actions=["iam:PassRole"],
+                    resources=["*"],
+                    conditions={"StringEquals": {"iam:PassedToService": "sagemaker.amazonaws.com"}},
                 ),
                 iam.PolicyStatement(
                     sid="AllowProjectKmsUsage",
@@ -176,6 +226,14 @@ class SecurityStack(Stack):
                         "iam:DeleteRolePermissionsBoundary", "iam:DeleteUserPermissionsBoundary",
                         "iam:PutRolePermissionsBoundary", "iam:PutUserPermissionsBoundary",
                     ],
+                    # iam:PassRole is excepted when passing to sagemaker.amazonaws.com
+                    # specifically (sagemaker_stack.py's Lambdas legitimately pass
+                    # SageMakerExecutionRole to CreateTrainingJob/CreateModel/etc --
+                    # a standard AWS pattern, not privilege escalation, since it hands
+                    # the role to a fixed AWS service rather than another principal).
+                    # Explicit Deny always beats Allow, so this condition has to live
+                    # on the Deny itself, not just as a separate Allow statement above.
+                    conditions={"StringNotEquals": {"iam:PassedToService": "sagemaker.amazonaws.com"}},
                     resources=["*"],
                 ),
                 iam.PolicyStatement(
